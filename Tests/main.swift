@@ -135,14 +135,12 @@ let syntheticPosts = [
 var directory = TeamDirectory()
 directory.approved = [developer.id: developer.name]
 directory.people = [
-    maya.id: TeamProfile(skills: ["Swift", "macOS"], owns: ["Remote Team"]),
-    duplicate.id: TeamProfile(skills: ["Swift"], backsUp: ["Remote Team"]),
-    nadia.id: TeamProfile(skills: ["Swift"]),
-    leo.id: TeamProfile(title: "Marketer", skills: ["email campaigns", "copywriting"])
+    maya.id: TeamProfile(title: ""),
+    duplicate.id: TeamProfile(title: ""),
+    nadia.id: TeamProfile(title: ""),
+    leo.id: TeamProfile(title: "Marketer")
 ]
 try directory.save(channel.guild, prefs: prefs)
-try TeamDirectory.saveCapacity([maya.id: Capacity(focused: true, expires: now.addingTimeInterval(2))],
-                               guild: channel.guild, prefs: prefs)
 
 var clock = now
 var requestPaths = [String]()
@@ -182,8 +180,8 @@ var response = try await service.listTeam()
 var peopleByID = rows(response)
 check(peopleByID[maya.id]?["role"] as? String == "Developer"
       && peopleByID[duplicate.id]?["role"] as? String == "Developer", "One approved role resolves for duplicate-name teammates")
-check(peopleByID[silent.id]?["role"] is NSNull && (peopleByID[silent.id]?["skills"] as? [String]) == [],
-      "Missing profile returns null title and empty skills")
+check(peopleByID[silent.id]?["role"] is NSNull,
+      "Missing profile returns null title")
 check(peopleByID[nadia.id]?["status"] as? String == Status.onBreak.title, "On-break specialist stays distinct")
 check(requestPaths.filter { $0.hasSuffix("/roles") }.count == 1 &&
       requestPaths.filter { $0.contains("/members/") }.count == 5, "Discovery reads one catalogue and unique targeted members")
@@ -195,7 +193,7 @@ response = try await service.listTeam()
 peopleByID = rows(response)
 check(requestPaths == unchangedPaths && peopleByID[maya.id]?["role"] is NSNull &&
       (peopleByID[maya.id]?["role_candidates"] as? [String]) == ["Developer", "SEO Analyst"], "Cached MCP sees approval edits and reports ambiguity")
-check(peopleByID[maya.id]?["capacity"] is NSNull, "Capacity expires on a cached attendance snapshot")
+check(peopleByID[maya.id]?["capacity"] == nil, "Capacity removed from MCP output")
 directory.people[maya.id]?.preferredRole = developer.name
 directory.people[duplicate.id]?.title = "Platform Developer"
 try directory.save(channel.guild, prefs: prefs)
@@ -207,8 +205,8 @@ directory.people[maya.id]?.title = "macOS Lead"
 try directory.save(channel.guild, prefs: prefs)
 peopleByID = rows(try await service.listTeam())
 check(peopleByID[maya.id]?["role_source"] as? String == "operator" &&
-      peopleByID[maya.id]?["skills"] as? [String] == ["Swift", "macOS"],
-      "Title correction retains skills and updates a running MCP service")
+      peopleByID[maya.id]?["role"] as? String == "macOS Lead",
+      "Title correction updates a running MCP service")
 directory.people[maya.id]?.title = ""
 try directory.save(channel.guild, prefs: prefs)
 check(TeamDirectory.load(channel.guild, prefs: prefs) == directory &&

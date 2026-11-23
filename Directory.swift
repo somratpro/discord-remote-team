@@ -16,6 +16,8 @@ struct GuildRole: Codable, Identifiable, Equatable {
 
 struct GuildMember: Decodable {
     let roles: [String]
+    var user: User? = nil
+    var nick: String? = nil
 }
 
 extension Discord {
@@ -27,23 +29,48 @@ extension Discord {
         guard isID(id) else { throw Problem("Invalid Discord user ID.") }
         return try await get("/guilds/\(channel.guild)/members/\(id)", as: GuildMember.self)
     }
+
+    func userProfile(_ id: String) async throws -> User {
+        guard isID(id) else { throw Problem("Invalid Discord user ID.") }
+        return try await get("/users/\(id)", as: User.self)
+    }
 }
 
 struct TeamProfile: Codable, Equatable {
     var title = ""
-    var skills: [String] = []
-    var owns: [String] = []
-    var backsUp: [String] = []
-    var preferredRole: String?
+    var preferredRole: String? = nil
+
+    var designation: String {
+        get { title }
+        set { title = newValue }
+    }
+
+    init(title: String = "", preferredRole: String? = nil) {
+        self.title = title
+        self.preferredRole = preferredRole
+    }
 }
 
-struct Capacity: Codable, Equatable {
-    var focused: Bool
-    var expires: Date
+func detectDesignation(from text: String, recognized: [String]) -> String? {
+    let lower = text.lowercased()
+    for title in recognized {
+        if lower.contains(title.lowercased()) { return title }
+    }
+    let aliases: [(key: String, title: String)] = [
+        ("developer", "Developer"), ("dev", "Developer"), ("engineer", "Developer"),
+        ("programmer", "Developer"), ("designer", "Designer"), ("ui/ux", "Designer"),
+        ("ui", "Designer"), ("seo", "SEO"), ("marketer", "Marketer"),
+        ("marketing", "Marketer"), ("manager", "Manager"), ("pm", "Manager"),
+        ("writer", "Writer"), ("copywriter", "Writer"), ("lead", "Lead"), ("admin", "Admin")
+    ]
+    for (key, title) in aliases {
+        if lower.contains(key) { return title }
+    }
+    return nil
 }
 
 struct TeamDirectory: Codable, Equatable {
-    static let defaultTitles = "Admin Officer, SEO Analyst, Developer, Dev Team Lead, Marketer, Designer, Project Manager, Software Engineer, Copywriter"
+    static let defaultTitles = "Developer, Designer, SEO, Marketer, Manager, Lead, Writer, Admin"
     var recognizedTitles = defaultTitles
     var approved: [String: String] = [:]
     var people: [String: TeamProfile] = [:]
@@ -58,26 +85,32 @@ struct TeamDirectory: Codable, Equatable {
         prefs.set(try JSONEncoder().encode(self), forKey: "directory." + guild)
     }
 
-    static func capacity(_ guild: String, prefs: UserDefaults = .standard) -> [String: Capacity] {
-        guard let data = prefs.data(forKey: "capacity." + guild) else { return [:] }
-        return (try? JSONDecoder().decode([String: Capacity].self, from: data)) ?? [:]
-    }
-
-    static func saveCapacity(_ value: [String: Capacity], guild: String, prefs: UserDefaults = .standard) throws {
-        prefs.set(try JSONEncoder().encode(value), forKey: "capacity." + guild)
-    }
-
     func resolve(_ id: String, evidence: RoleEvidence) -> ResolvedProfile {
         let profile = people[id] ?? TeamProfile()
+        let recognized = recognizedTitles.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+
+        // 1. Explicit operator designation
+        if !profile.title.isEmpty {
+            return ResolvedProfile(profile: profile, role: profile.title, source: "operator", candidates: [], bio: evidence.bios[id])
+        }
+
+        // 2. Detected from Discord bio
+        if let bio = evidence.bios[id], let detected = detectDesignation(from: bio, recognized: recognized) {
+            return ResolvedProfile(profile: profile, role: detected, source: "bio", candidates: [], bio: bio)
+        }
+
+        // 3. Approved Discord server roles
         let candidates = Set((evidence.members[id] ?? []).compactMap { roleID -> String? in
             guard let role = evidence.roles[roleID], approved[roleID] == role.name else { return nil }
             return role.name
         }).sorted()
-        if !profile.title.isEmpty { return ResolvedProfile(profile: profile, role: profile.title, source: "operator", candidates: []) }
+
         let preferred = profile.preferredRole.flatMap { candidates.contains($0) ? $0 : nil }
         let role = preferred ?? (candidates.count == 1 ? candidates.first : nil)
         return ResolvedProfile(profile: profile, role: role,
-                               source: role == nil ? "unknown" : "discord_role", candidates: candidates)
+                               source: role == nil ? "unknown" : "discord_role",
+                               candidates: candidates,
+                               bio: evidence.bios[id])
     }
 }
 
@@ -86,11 +119,13 @@ struct ResolvedProfile {
     let role: String?
     let source: String
     let candidates: [String]
+    var bio: String? = nil
 }
 
 struct RoleEvidence: Equatable {
     var roles: [String: GuildRole] = [:]
     var members: [String: [String]] = [:]
+    var bios: [String: String] = [:]
     var incomplete = false
 }
 
@@ -168,7 +203,13 @@ struct DirectoryTransfer: Codable {
             evidence.members[id] = nil
             guard clock() >= retryAt, !Task.isCancelled else { continue }
             do {
-                evidence.members[id] = try await api.guildMember(id).roles
+                let member = try await api.guildMember(id)
+                evidence.members[id] = member.roles
+                if let bio = member.user?.bio, !bio.isEmpty {
+                    evidence.bios[id] = bio
+                } else if let user = try? await api.userProfile(id), let bio = user.bio, !bio.isEmpty {
+                    evidence.bios[id] = bio
+                }
                 membersUntil[id] = clock().addingTimeInterval(lifetime)
             } catch {
                 if error is RateLimit { pause(error, now: clock()) }

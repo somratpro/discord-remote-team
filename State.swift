@@ -16,20 +16,17 @@ import SwiftUI
     @Published var lastUpdatesSync: Date?
     @Published var directory = TeamDirectory()
     @Published var evidence = RoleEvidence()
-    @Published var capacity: [String: Capacity] = [:]
     var guild: String? { sample ? "preview" : Channel(channelLink)?.guild }
     var updatesChannel: Channel? { Channel(updatesLink) ?? Channel(channelLink) }
     private var discovery = RoleDiscovery()
     private var roleTask: Task<Void, Never>?
 
-    func saveDirectory(_ value: TeamDirectory, capacity: [String: Capacity], guild: String) throws {
+    func saveDirectory(_ value: TeamDirectory, guild: String) throws {
         guard guild == self.guild else { throw Problem("The selected Discord server changed.") }
         if !sample {
             try value.save(guild, prefs: prefs)
-            try TeamDirectory.saveCapacity(capacity, guild: guild, prefs: prefs)
         }
         directory = value
-        self.capacity = capacity
     }
 
     func profile(_ person: Person) -> ResolvedProfile {
@@ -103,20 +100,19 @@ import SwiftUI
         roleTask?.cancel(); roleTask = nil; discovery = RoleDiscovery()
         evidence = RoleEvidence()
         directory = Channel(channelLink).map { TeamDirectory.load($0.guild, prefs: prefs) } ?? TeamDirectory()
-        capacity = Channel(channelLink).map { TeamDirectory.capacity($0.guild, prefs: prefs) } ?? [:]
     }
     func preview() {
         reset()
         mode = "Preview"; detail = "Sample teammates · disconnected from Discord"
         directory = TeamDirectory()
-        capacity = [:]
-        directory.people["sample-0"] = TeamProfile(title: "Developer and macOS Accessibility Engineering Lead", skills: ["Swift", "macOS"], owns: ["Remote Team"])
-        directory.people["sample-3"] = TeamProfile(title: "Marketer", skills: ["email campaigns", "copywriting"])
+        directory.people["sample-0"] = TeamProfile(title: "Developer")
+        directory.people["sample-3"] = TeamProfile(title: "Marketer")
         let developer = GuildRole(id: "sample-developer", name: "Developer", managed: false)
-        let analyst = GuildRole(id: "sample-analyst", name: "SEO Analyst", managed: false)
+        let analyst = GuildRole(id: "sample-analyst", name: "SEO", managed: false)
         directory.approved[developer.id] = developer.name
         evidence = RoleEvidence(roles: [developer.id: developer, analyst.id: analyst],
-                                members: ["sample-1": [developer.id], "sample-2": [analyst.id]])
+                                members: ["sample-1": [developer.id], "sample-2": [analyst.id]],
+                                bios: ["sample-2": "SEO Specialist & Content Strategist"])
         let names = ["Maya Ahmed", "Arif Khan", "Nadia Islam", "Leo Chen"]
         let states: [Status] = [.inside,.onBreak,.outside,.unknown]
         people = names.enumerated().map { i, n in

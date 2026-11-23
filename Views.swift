@@ -49,24 +49,6 @@ struct RosterView: View {
                     Text(state.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
                 }.foregroundStyle(.secondary).padding(12)
             }
-            if !state.sample, let channel = state.updatesChannel, state.hasConnection {
-                VStack(alignment: .leading, spacing: 4) {
-                    Button {
-                        state.openBrowser(channel.url)
-                    } label: {
-                        Label("Open work updates channel", systemImage: "arrow.up.right.square")
-                    }.buttonStyle(.borderless)
-                    if let readAt = state.lastUpdatesSync {
-                        Text("Last read " + state.updateReadTime(readAt))
-                    }
-                    if let warning = state.updatesWarning {
-                        Text(warning)
-                    } else if state.lastUpdatesSync != nil && !state.people.contains(where: { $0.workUpdate != nil }) {
-                        Text("No readable updates today")
-                    }
-                }.font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal, 16).padding(.vertical, 6)
-            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Status.allCases, id: \.rawValue) { status in
@@ -265,11 +247,11 @@ struct DirectoryView: View {
     let openProfile: (Person) -> Void
     let close: () -> Void
     @SwiftUI.State private var draft: TeamDirectory
-    @SwiftUI.State private var capacity: [String: Capacity]
     @SwiftUI.State private var imported: DirectoryTransfer?
     @SwiftUI.State private var error = ""
     @SwiftUI.State private var selection: String?
-    @SwiftUI.State private var rawLists: [String: String] = [:]
+
+    private let shortDesignations = ["Developer", "Designer", "SEO", "Marketer", "Manager", "Lead", "Writer", "Admin"]
 
     init(state: State, guild: String, openProfile: @escaping (Person) -> Void, close: @escaping () -> Void) {
         self.state = state
@@ -277,33 +259,32 @@ struct DirectoryView: View {
         self.openProfile = openProfile
         self.close = close
         _draft = SwiftUI.State(initialValue: state.directory)
-        _capacity = SwiftUI.State(initialValue: state.capacity.filter { $0.value.expires > Date() })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Review job titles").font(.headline)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Recognized job titles").font(.callout)
-                        TextField("Separate titles with commas", text: $draft.recognizedTitles)
-                            .accessibilityLabel("Recognized job titles, separated by commas")
-                        Text("Approve exact job role labels once for everyone who has them.")
+                    Text("Recognized designations").font(.headline)
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Separate designations with commas", text: $draft.recognizedTitles)
+                            .accessibilityLabel("Recognized designations, separated by commas")
+                        Text("Approved designations for matching roles or bios.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    if state.evidence.incomplete { Text("Some Discord role assignments could not be verified.").font(.caption) }
                     let labels = reviewableRoles.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
-                    ForEach(labels, id: \.self) { label in
-                        let ids = reviewableRoles[label, default: []].map(\.id)
-                        Toggle(label, isOn: Binding(
-                            get: { ids.allSatisfy { draft.approved[$0] == label } },
-                            set: { approved in
-                                for id in ids { draft.approved[id] = approved ? label : nil }
-                            }
-                        ))
+                    if !labels.isEmpty {
+                        Text("Approve server roles").font(.subheadline).padding(.top, 4)
+                        ForEach(labels, id: \.self) { label in
+                            let ids = reviewableRoles[label, default: []].map(\.id)
+                            Toggle(label, isOn: Binding(
+                                get: { ids.allSatisfy { draft.approved[$0] == label } },
+                                set: { approved in
+                                    for id in ids { draft.approved[id] = approved ? label : nil }
+                                }
+                            ))
+                        }
                     }
-                    if labels.isEmpty { Text("No recognized job roles to review.").foregroundStyle(.secondary) }
                     Divider()
                     Text("Teammates").font(.headline)
                     ForEach(state.people) { person in
@@ -312,9 +293,9 @@ struct DirectoryView: View {
                                                              set: { selection = $0 ? person.id : nil })) {
                             fields(person, resolved: resolved).padding(.vertical, 8)
                         } label: {
-                            VStack(alignment: .leading) {
-                                Text(person.user.name)
-                                Text(resolved.role ?? (resolved.candidates.isEmpty ? "Title unknown" : "Multiple approved titles"))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(person.user.name).fontWeight(.medium)
+                                Text(resolved.role ?? (resolved.candidates.isEmpty ? "No designation set" : "Multiple approved titles"))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -333,14 +314,13 @@ struct DirectoryView: View {
                 Button("Cancel", action: close)
                 Button("Save") {
                     for id in Array(draft.people.keys) { trimTitle(id) }
-                    capacity = capacity.filter { $0.value.expires > Date() }
                     draft.people = draft.people.filter { $0.value != TeamProfile() }
-                    do { try state.saveDirectory(draft, capacity: capacity, guild: guild); close() }
+                    do { try state.saveDirectory(draft, guild: guild); close() }
                     catch { self.error = error.localizedDescription }
                 }.keyboardShortcut(.defaultAction)
                     .disabled(state.guild != guild || imported != nil)
             }
-        }.textFieldStyle(.roundedBorder).padding(18).frame(width: 545, height: 560)
+        }.textFieldStyle(.roundedBorder).padding(18).frame(width: 520, height: 490)
             .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -355,32 +335,49 @@ struct DirectoryView: View {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
-    private func text(_ id: String, key: String, field: WritableKeyPath<TeamProfile, [String]>) -> Binding<String> {
-        let entry = id + "/" + key
-        return Binding(get: { rawLists[entry] ?? draft.people[id, default: TeamProfile()][keyPath: field].joined(separator: ", ") },
-                       set: { value in
-                           rawLists[entry] = value
-                           draft.people[id, default: TeamProfile()][keyPath: field] = items(value)
-                       })
-    }
-
     private func fields(_ person: Person, resolved: ResolvedProfile) -> some View {
         let id = person.id
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(id).font(.caption.monospaced())
+                Text(id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Spacer()
                 Button("Open Discord profile") { openProfile(person) }.disabled(state.sample)
             }
-            TextField("Explicit job title from profile or team records", text: Binding(
-                get: { draft.people[id, default: TeamProfile()].title },
-                set: { draft.people[id, default: TeamProfile()].title = $0 }
-            )).onSubmit { trimTitle(id) }
+            if let bio = resolved.bio, !bio.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Bio from Discord:").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    Text(bio).font(.caption).padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Designation").font(.callout.weight(.medium))
+                TextField("e.g. Developer, Designer, SEO", text: Binding(
+                    get: { draft.people[id, default: TeamProfile()].title },
+                    set: { draft.people[id, default: TeamProfile()].title = $0 }
+                )).onSubmit { trimTitle(id) }
+
+                HStack(spacing: 5) {
+                    Text("Quick set:").font(.caption).foregroundStyle(.secondary)
+                    ForEach(shortDesignations, id: \.self) { desig in
+                        Button(desig) {
+                            draft.people[id, default: TeamProfile()].title = desig
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.12), in: Capsule())
+                    }
+                }
+            }
             if !draft.people[id, default: TeamProfile()].title.isEmpty {
-                Button("Clear title override") { draft.people[id, default: TeamProfile()].title = "" }
+                Button("Clear designation") { draft.people[id, default: TeamProfile()].title = "" }
+                    .font(.caption)
             }
             if resolved.candidates.count > 1 {
-                Menu("Choose an approved role") {
+                Menu("Choose an approved role (\(resolved.candidates.joined(separator: ", ")))") {
                     if draft.people[id]?.preferredRole != nil {
                         Button("Clear choice") { draft.people[id]?.preferredRole = nil }
                     }
@@ -389,34 +386,7 @@ struct DirectoryView: View {
                     }
                 }
             }
-            TextField("Skills, separated by commas", text: text(id, key: "skills", field: \.skills))
-            TextField("Projects owned, separated by commas", text: text(id, key: "owns", field: \.owns))
-            TextField("Projects backed up, separated by commas", text: text(id, key: "backsUp", field: \.backsUp))
-            Picker("Capacity set by operator", selection: Binding(
-                get: { capacity[id].map { $0.focused ? "focused" : "taking" } ?? "" },
-                set: { option in
-                    capacity[id] = option.isEmpty ? nil : Capacity(focused: option == "focused", expires: nextTeamDay)
-                }
-            )) {
-                Text("Unknown").tag("")
-                Text("Taking tasks").tag("taking")
-                Text("Focused until…").tag("focused")
-            }
-            if let entry = capacity[id] {
-                DatePicker("Expires", selection: Binding(get: { entry.expires }, set: { expiry in
-                    capacity[id] = Capacity(focused: entry.focused, expires: expiry)
-                }))
-                Button("Expire at next team day") {
-                    capacity[id] = Capacity(focused: entry.focused, expires: nextTeamDay)
-                }
-            }
         }
-    }
-
-    private var nextTeamDay: Date {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = state.zone
-        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
     }
 
     private func trimTitle(_ id: String) {
@@ -464,27 +434,21 @@ struct DirectoryView: View {
             ForEach(value.people.keys.sorted(), id: \.self) { id in
                 if let incoming = value.people[id], incoming != draft.people[id] {
                     let name = state.people.first { $0.id == id }.map { $0.user.name + " · " + id } ?? id
-                    Text("\(name) · \(draft.people[id] == nil ? "New profile" : "Conflicting profile")")
-                    if let current = draft.people[id] { Text("Current · " + describe(current)).font(.caption) }
-                    Text("Incoming · " + describe(incoming)).font(.caption)
+                    Text("\(name) · \(draft.people[id] == nil ? "New designation" : "Conflicting designation")")
+                    if let current = draft.people[id], !current.title.isEmpty { Text("Current · " + current.title).font(.caption) }
+                    if !incoming.title.isEmpty { Text("Incoming · " + incoming.title).font(.caption) }
                 }
             }
             HStack {
                 Button("Cancel import") { imported = nil }
                 Button("Keep existing conflicts") {
-                    draft = value.applying(to: draft, replaceConflicts: false); rawLists = [:]; imported = nil
+                    draft = value.applying(to: draft, replaceConflicts: false); imported = nil
                 }
                 Button("Use incoming conflicts") {
-                    draft = value.applying(to: draft, replaceConflicts: true); rawLists = [:]; imported = nil
+                    draft = value.applying(to: draft, replaceConflicts: true); imported = nil
                 }
             }
         }
-    }
-
-    private func describe(_ profile: TeamProfile) -> String {
-        [profile.title, profile.skills.joined(separator: ", "),
-         "Owns " + profile.owns.joined(separator: ", "), "Backs up " + profile.backsUp.joined(separator: ", ")]
-            .filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

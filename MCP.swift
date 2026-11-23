@@ -4,24 +4,22 @@ import Foundation
 @MainActor enum RemoteMCP {
     static let version = "2025-06-18"
     static let instructions = """
-    Ask whether the operator wants to delegate a substantial task. If they agree, call list_team once with {} or use find_teammate to filter by skills or roles. Clarify the deliverable if it is unclear. Start with checked-in people, then match the required skills and role. Quote the relevant skill in your reason. Prefer a qualified checked-in project owner, then a qualified checked-in backup, and explain a substitution. Offer equally qualified people together. If no checked-in person has the required skill or a suitable backup is missing, explain the gap and let the operator decide. Attendance alone does not confirm capacity. Respect a recorded focus period and confirm capacity with the teammate. Identify the chosen recipient by Discord user ID when names collide. Draft the goal, deliverable, completion criteria and any supplied deadline. Get explicit approval for the exact recipient and message before sending through an independently authorized interface. A Discord link opens navigation only. Keep the profile fallback available. Report delivery only after confirmed sending.
+    Ask whether the operator wants to delegate a substantial task. If they agree, call list_team once with {} or use find_teammate to filter by designation. Clarify the deliverable if it is unclear. Start with checked-in people, then match the required role or designation. Prefer a qualified checked-in person. Offer equally qualified people together. If no checked-in person has the required designation, explain the gap and let the operator decide. Identify the chosen recipient by Discord user ID when names collide. Draft the goal, deliverable, completion criteria and any supplied deadline. Get explicit approval for the exact recipient and message before sending through an independently authorized interface. A Discord link opens navigation only. Keep the profile fallback available. Report delivery only after confirmed sending.
     """
     static let tools: [[String: Any]] = [
         [
             "name": "list_team",
-            "description": "Use once for who is active, on break, or out, or to find an available teammate for delegation. No arguments. Returns a summary, status counts, and the full attendance roster with roles, skills, ownership, capacity and Discord navigation links. Available teammates are checked in.",
+            "description": "Use once for who is active, on break, or out, or to find an available teammate for delegation. No arguments. Returns a summary, status counts, and the full attendance roster with designations and Discord navigation links. Available teammates are checked in.",
             "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false],
             "annotations": ["readOnlyHint": true, "openWorldHint": true]
         ],
         [
             "name": "find_teammate",
-            "description": "Finds available or on-break teammates matching specified skill, role, or project ownership criteria for delegation.",
+            "description": "Finds available or on-break teammates matching specified designation or role criteria for delegation.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "skill": ["type": "string", "description": "Skill keyword to match (e.g. Swift, Marketing, SEO)"],
-                    "role": ["type": "string", "description": "Job role to match (e.g. Developer, Designer)"],
-                    "owns": ["type": "string", "description": "Project owned or backed up (e.g. Remote Team)"],
+                    "role": ["type": "string", "description": "Designation or role to match (e.g. Developer, Designer, SEO)"],
                     "status": ["type": "string", "description": "Status filter: 'Checked in' (default), 'On break', or 'All'"]
                 ],
                 "additionalProperties": false
@@ -80,27 +78,16 @@ import Foundation
                     do {
                         let roster = try await list()
                         let args = params["arguments"] as? [String: Any] ?? [:]
-                        let skillQuery = (args["skill"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                        let roleQuery = (args["role"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                        let ownsQuery = (args["owns"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let roleQuery = (args["role"] as? String ?? args["designation"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                         let statusFilter = (args["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Checked in"
 
                         let teammates = (roster["teammates"] as? [[String: Any]]) ?? []
                         let matches = teammates.filter { t in
                             let status = t["status"] as? String ?? ""
                             if statusFilter != "All" && status != statusFilter { return false }
-                            if let skill = skillQuery, !skill.isEmpty {
-                                let skills = (t["skills"] as? [String])?.map { $0.lowercased() } ?? []
-                                if !skills.contains(where: { $0.contains(skill) }) { return false }
-                            }
                             if let role = roleQuery, !role.isEmpty {
-                                let r = (t["role"] as? String)?.lowercased() ?? ""
+                                let r = (t["role"] as? String ?? t["designation"] as? String ?? "").lowercased()
                                 if !r.contains(role) { return false }
-                            }
-                            if let proj = ownsQuery, !proj.isEmpty {
-                                let owns = (t["owns"] as? [String])?.map { $0.lowercased() } ?? []
-                                let backsUp = (t["backs_up"] as? [String])?.map { $0.lowercased() } ?? []
-                                if !owns.contains(where: { $0.contains(proj) }) && !backsUp.contains(where: { $0.contains(proj) }) { return false }
                             }
                             return true
                         }
@@ -182,20 +169,17 @@ import Foundation
     }()
 
     static func render(posts: [Post], fetchedAt: Date, now: Date, zone: TimeZone,
-                       directory: TeamDirectory, capacity: [String: Capacity],
+                       directory: TeamDirectory,
                        evidence: RoleEvidence, prefs: UserDefaults) -> [String: Any] {
         let people = roster(posts: posts, members: [], rules: Rules(now: now, zone: zone)).map { person -> [String: Any] in
             let profile = directory.resolve(person.id, evidence: evidence)
             var result: [String: Any] = [
                 "name": person.user.name, "discord_user_id": person.id, "status": person.status.title,
                 "role": profile.role as Any? ?? NSNull(), "role_source": profile.source,
-                "skills": profile.profile.skills, "owns": profile.profile.owns, "backs_up": profile.profile.backsUp
+                "designation": profile.role as Any? ?? NSNull()
             ]
+            if let bio = profile.bio { result["bio"] = bio }
             if !profile.candidates.isEmpty && profile.role == nil { result["role_candidates"] = profile.candidates }
-            if let value = capacity[person.id], value.expires > now {
-                result["capacity"] = ["status": value.focused ? "focused" : "taking_tasks",
-                                      "expires_at": plainDate.string(from: value.expires), "source": "operator"]
-            } else { result["capacity"] = NSNull() }
             if let first = person.firstIn { result["first_in"] = plainDate.string(from: first) }
             if let last = person.last { result["status_since"] = plainDate.string(from: last) }
             if person.autoCheckedOut { result["checkout"] = "automatic" }
@@ -284,9 +268,8 @@ import Foundation
         let evidence = await discovery.load(api, ids: ids, clock: clock)
         let now = clock()
         let directory = TeamDirectory.load(channel.guild, prefs: prefs)
-        let capacity = TeamDirectory.capacity(channel.guild, prefs: prefs)
         return RemoteMCP.render(posts: current.posts, fetchedAt: current.fetchedAt, now: now, zone: zone,
-                      directory: directory, capacity: capacity, evidence: evidence, prefs: prefs)
+                      directory: directory, evidence: evidence, prefs: prefs)
     }
 
 }

@@ -57,6 +57,7 @@ struct User: Codable, Equatable {
     var global_name: String? = nil
     var avatar: String? = nil
     var bot: Bool? = nil
+    var bio: String? = nil
     var name: String { global_name ?? username }
 }
 struct Post: Codable, Equatable {

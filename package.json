@@ -1,0 +1,9 @@
+{
+  "name": "discord-remote-team",
+  "private": true,
+  "scripts": {
+    "release:patch": "node scripts/release.mjs patch",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:major": "node scripts/release.mjs major"
+  }
+}

@@ -20,6 +20,8 @@ This file applies to the whole project. Read the README for user-facing setup. K
 | `main.swift` | AppKit menu bar and panel, DM/profile navigation, launch and wake handling, and dispatch to stdio MCP |
 | `MCP.swift` | JSON-RPC stdio, `list_team`, and the copyable setup prompt |
 | `build.sh`, `Info.plist`, `Icon.swift` | Universal compilation, bundle metadata, icon generation and local signing |
+| `package.sh`, `.github/workflows/macos.yml` | Verified DMG packaging and tagged GitHub Releases |
+| `scripts/release.mjs`, `package.json` | One-command patch, minor, and major releases from a clean main branch |
 | `Tests/main.swift` | Deterministic roster, work-update, navigation, and mocked Discord API tests |
 
 ## Attendance and updates

@@ -17,9 +17,9 @@ This file applies to the whole project. Read the README for user-facing setup. K
 | `Discord.swift` | Discord channel and message URLs, API client, pagination, Keychain, attendance rules and work-update matching |
 | `Directory.swift` | Targeted guild role discovery, profile resolution, preferences, transfer and retry deadlines |
 | `State.swift` | App settings, periodic refresh, in-memory snapshots, status text and avatar fetching |
-| `Views.swift` | SwiftUI roster, update previews, Settings, and sample preview |
+| `Views.swift` | SwiftUI roster, update previews, Settings, simplified Team Directory, and sample preview |
 | `main.swift` | AppKit menu bar and panel, DM/profile navigation, launch and wake handling, and dispatch to stdio MCP |
-| `MCP.swift` | JSON-RPC stdio, `list_team`, and the copyable setup prompt |
+| `MCP.swift` | JSON-RPC stdio, `list_team`, `find_teammate`, `get_daily_summary`, and the copyable setup prompt |
 | `build.sh`, `Info.plist`, `Icon.swift` | Apple silicon compilation, bundle metadata, icon generation and local signing |
 | `package.sh`, `.github/workflows/macos.yml` | Verified DMG packaging and tagged GitHub Releases |
 | `scripts/release.mjs`, `package.json` | One-command patch, minor, and major releases from a clean main branch |
@@ -37,16 +37,17 @@ This file applies to the whole project. Read the README for user-facing setup. K
 
 ## Team directory
 
-- Read the targeted guild role catalogue and individual check-in authors' membership. Cache results in memory with bounded concurrency, refresh assignments periodically, and keep attendance usable when role reads fail.
-- Scope approvals by guild and role ID, and explicit titles, skills, ownership, backups and capacity by guild and user ID. Use the shared resolver in the app and MCP. Prefer explicit titles, then verified approved roles. Preserve ambiguity until resolved and ignore managed, access and integration roles in title suggestions. Keep Preview changes in memory.
-- Transfer titles, role approvals, skills and ownership for the selected guild. Preview additions and conflicts before saving. Keep credentials, capacity, DM links and Discord history out of transfers. Capacity expires independently of attendance.
+- Read the targeted guild role catalogue, individual check-in authors' membership, and Discord user bios. Cache results in memory with bounded concurrency, refresh assignments periodically, and keep attendance usable when role reads fail.
+- Scope approvals by guild and role ID, and explicit designations by guild and user ID. Resolve titles in priority order: explicit operator designation first, matching keyword from Discord user bio second, verified approved guild roles third. Common recognized designations include Developer, Designer, SEO, Marketer, Manager, Lead, Writer, and Admin. Unnecessary fields (skills, projects owned/backed up, and operator capacity) are removed.
+- Transfer designations and role approvals for the selected guild. Preview additions and conflicts before saving. Keep credentials, DM links and Discord history out of transfers.
 
 ## MCP and agent handoffs
 
 - The installed stdio command is `/Applications/Remote Team.app/Contents/MacOS/TeamCheckin --mcp`. Stdout is reserved for newline-delimited JSON-RPC. Read the Keychain credential locally. The copyable connection prompt contains the command and instructions, with the token kept in Keychain.
-- For an availability question, call `list_team` once with no arguments and answer from its result. Preserve the summary, counts, available/on-break names, full attendance roster, timestamps, and Discord navigation links in that single response. Include titles and their source, skills, ownership and unexpired capacity. Work-update text is displayed in the app.
+- For an availability question, call `list_team` once with no arguments and answer from its result. Preserve the summary, counts, available/on-break names, full attendance roster, timestamps, designations, bios, and Discord navigation links in that single response. Work-update text is displayed in the app.
+- AI agents can also use `find_teammate` (filtering by designation, e.g. "Designer", "Developer", "SEO", and status) or `get_daily_summary` (standup-ready summary of team availability and hours worked).
 - The MCP server can reuse a Discord snapshot for up to five seconds per process and recalculates status at call time. A new fetch follows the saved check-in channel setting. A temporary app launch with a channel override can make the app and MCP read different channels, so pass the same override to both during an isolated test.
-- For a substantial task that a human could take on, ask if the operator wants to delegate. If they agree, use `list_team`, suggest checked-in teammates based on required skills and project responsibility, and let the operator select a recipient. Explain ties and gaps. Confirm actual capacity with the teammate. Draft the goal, deliverable and deadline if known. Show the draft and send only with explicit approval of the exact recipient and message through an authorized Discord interface. Provide the link and draft if sending is unavailable. The app's MCP server is read-only.
+- For a substantial task that a human could take on, ask if the operator wants to delegate. If they agree, use `find_teammate` or `list_team`, suggest checked-in teammates based on required designation and availability, and let the operator select a recipient. Explain ties and gaps. Draft the goal, deliverable and deadline if known. Show the draft and send only with explicit approval of the exact recipient and message through an authorized Discord interface. Provide the link and draft if sending is unavailable. The app's MCP server is read-only.
 
 ## Build and verification
 

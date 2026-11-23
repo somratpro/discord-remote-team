@@ -59,7 +59,8 @@ final class RosterPanel: NSPanel {
         DispatchQueue.main.async { [weak self] in self?.renderPending = false; self?.render() }
     }
     func render() {
-        let count = state.inside.count
+        let inShift = state.visiblePeople
+        let count = inShift.count
         switch state.mode {
         case "Live": countItem.button?.title = " \(count) in"
         case "Offline": countItem.button?.title = state.lastSync == nil ? " Offline" : " \(count) in · stale"
@@ -70,7 +71,7 @@ final class RosterPanel: NSPanel {
         countItem.button?.image = NSImage(systemSymbolName: state.mode == "Offline" ? "exclamationmark.triangle" : "person.2.fill", accessibilityDescription: "Remote Team")
         countItem.button?.imagePosition = .imageLeading
         countItem.button?.toolTip = "Remote Team · " + state.detail
-        shown = state.faces ? Array(state.visiblePeople.prefix(3)) : []
+        shown = state.faces ? Array(inShift.prefix(3)) : []
         while faces.count > shown.count { NSStatusBar.system.removeStatusItem(faces.removeLast()) }
         while faces.count < shown.count {
             let item = NSStatusBar.system.statusItem(withLength: 25)

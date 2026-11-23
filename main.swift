@@ -246,16 +246,10 @@ final class RosterPanel: NSPanel {
 
     func dm(_ person: Person) {
         guard !state.sample else { return }
-        // If we already have a saved DM link, use it immediately.
         if let url = dmURL(state.dm(person.id)) {
             state.openBrowser(url)
-            return
-        }
-        // No saved link — resolve the real DM channel ID via the API, save it, then open.
-        Task { @MainActor in
-            if let url = await state.resolveDM(for: person) {
-                state.openBrowser(url)
-            }
+        } else {
+            openProfile(person)
         }
     }
     func openProfile(_ person: Person) {

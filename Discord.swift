@@ -218,7 +218,6 @@ enum Keychain {
 struct RateLimit: Error { let seconds: TimeInterval }
 struct Discord {
     private struct Limit: Decodable { let retry_after: Double }
-    private struct DMChannel: Decodable { let id: String }
     let token: String
     let channel: Channel
     var session: URLSession = .shared
@@ -237,27 +236,6 @@ struct Discord {
             let seconds = (try? JSONDecoder().decode(Limit.self, from: data).retry_after) ?? 60
             throw RateLimit(seconds: max(1, seconds))
         default: throw Problem("Discord returned HTTP \(status ?? 0). Retrying automatically.")
-        }
-    }
-    /// Resolves the DM channel ID for a given user ID via POST /users/@me/channels.
-    /// Returns the channel ID string on success, and auto-saves it into UserDefaults.
-    func createDM(userID: String) async throws -> String {
-        let url = URL(string: "https://discord.com/api/v10/users/@me/channels")!
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
-        request.httpMethod = "POST"
-        request.setValue("Bot " + token, forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["recipient_id": userID])
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode
-        switch status {
-        case 200: return try JSONDecoder().decode(DMChannel.self, from: data).id
-        case 401: throw Problem("Discord rejected the bot token. Replace it in Settings.")
-        case 403: throw Problem("Could not open a DM channel. The bot may lack permission.")
-        case 429:
-            let seconds = (try? JSONDecoder().decode(Limit.self, from: data).retry_after) ?? 60
-            throw RateLimit(seconds: max(1, seconds))
-        default: throw Problem("Discord returned HTTP \(status ?? 0) resolving DM channel.")
         }
     }
     func page(before id: String? = nil) async throws -> [Post] {

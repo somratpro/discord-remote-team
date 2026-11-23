@@ -249,7 +249,9 @@ import SwiftUI
     }
     func subtitle(_ p: Person) -> String {
         switch p.status {
-        case .inside: return p.firstIn != p.last ? "In since " + time(p.last) + " · first in " + time(p.firstIn) : "In since " + time(p.last)
+        case .inside:
+            let duration = p.firstIn.map { " (" + elapsedString(from: $0) + ")" } ?? ""
+            return (p.firstIn != p.last ? "In since " + time(p.last) + " · first in " + time(p.firstIn) : "In since " + time(p.last)) + duration
         case .onBreak: return "On break since " + time(p.last)
         case .outside: return (p.autoCheckedOut ? "Auto out " : "Out ") + time(p.last) + (p.firstIn.map { " · first in " + time($0) } ?? "")
         case .earlier:
@@ -257,6 +259,35 @@ import SwiftUI
             return p.last.map { "Last in " + f.string(from: $0) } ?? "Earlier check-in"
         case .unknown: return "No update today"
         }
+    }
+    func elapsedString(from start: Date, to end: Date = Date()) -> String {
+        let diff = max(0, Int(end.timeIntervalSince(start)))
+        let hours = diff / 3600
+        let mins = (diff % 3600) / 60
+        if hours > 0 { return "\(hours)h \(mins)m" }
+        return "\(mins)m"
+    }
+    func copyStandupSummary() {
+        let now = Date()
+        var text = "# Team Standup · " + time(now) + "\n\n"
+        let onBreak = people.filter { $0.status == .onBreak }
+        let outside = people.filter { $0.status == .outside }
+        text += "### Overview: \(inside.count) Checked In · \(onBreak.count) On Break · \(outside.count) Checked Out\n\n"
+        let activeMembers = people.filter { $0.status != .unknown && $0.status != .earlier }
+        if !activeMembers.isEmpty {
+            for p in activeMembers {
+                let prof = profile(p)
+                let roleStr = prof.role.map { " (\($0))" } ?? ""
+                text += "- **\(p.user.name)**\(roleStr) — \(subtitle(p))\n"
+                if let update = p.workUpdate {
+                    text += "  - *Latest update (\(time(update.date))):* \(update.text)\n"
+                }
+            }
+        } else {
+            text += "_No check-ins recorded today._\n"
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
     func dm(_ id: String) -> String { prefs.string(forKey: "dm." + id) ?? "" }
     func openBrowser(_ url: URL) {

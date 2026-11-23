@@ -29,9 +29,23 @@ pnpm run release:major
 
 The command bumps the version and build number, creates the release commit and tag, and pushes both to GitHub. Actions builds the tagged version and publishes its DMG on Releases. If the push fails, fix the Git connection and rerun the command to retry the pending release.
 
-## Build and connect
+## Connect your Discord bot
 
-Run `./build.sh` with Apple's Swift command line tools. Move the resulting app to Applications, open Settings, and paste the check-in channel URL. Install a Discord bot with **View Channels** and **Read Message History** for that channel, and enable **Message Content Intent**. Paste the bot token in Remote Team Settings. Each Mac stores its credential in Keychain and reads attendance from Discord. See [Discord’s bot setup guide](https://docs.discord.com/developers/quick-start/getting-started).
+Each team creates a free Discord bot to read check-ins directly from their server. To set it up:
+
+1. **Create the bot application**: Open the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**. Give it a name (e.g. `Remote Team`).
+2. **Enable Privileged Intents**: Go to the **Bot** tab on the left. Under **Privileged Gateway Intents**, turn on:
+   - **Message Content Intent** (required to read `in`, `out`, `break`, `back` commands and updates)
+   - **Server Members Intent** (required for role discovery and team directory)
+   Click **Save Changes**.
+3. **Copy the Bot Token**: On the same **Bot** page, click **Reset Token** (confirm with 2FA if prompted) and **Copy** the token.
+4. **Invite the bot to your server**:
+   - Go to **OAuth2 → URL Generator**.
+   - Under **Scopes**, select `bot`.
+   - Under **Bot Permissions**, select **View Channels** and **Read Message History**.
+   - Copy the generated URL at the bottom, open it in your browser, and authorize the bot into your team's Discord server.
+5. **Grant channel access**: In Discord, make sure the bot has access to view and read message history in your check-in channel (and optional work updates channel). Right-click the channel name and select **Copy Channel Link**.
+6. **Connect the Mac app**: Open Remote Team on your Mac, go to **Settings** (gear icon), paste the channel URL and bot token, and click **Save & connect**. Each Mac stores the bot token securely in macOS Keychain.
 
 Click an avatar to try the Discord DM route automatically. Existing saved DM links take precedence. Discord may require the actual conversation ID for some people. If Discord opens Friends, right-click the person in the Remote Team roster, choose **Open Discord profile**, and use **Message** in Discord. The desktop profile shortcut uses the Discord app if installed.
 
@@ -49,7 +63,7 @@ Right-click a roster entry and choose **Prepare handoff** to paste or write the 
 
 Choose **Copy AI setup prompt** in Settings or the roster menu. Paste the prompt into a client with local stdio MCP support on the same Mac. The prompt contains the executable path, local configuration and delegation instructions. The client may require approval to register the server or enable its tools.
 
-Call the read-only `list_team` tool once with no arguments for availability questions. It returns a summary, counts, check-in timestamps, job titles and their sources, skills, ownership, current capacity, and Discord navigation links in one response. Repeated calls within five seconds can reuse the same Discord snapshot while recalculating the current statuses. It uses the local Keychain credential. Clients that support persistent instructions can use the supplied prompt to ask about delegation for substantial tasks, get the team roster and draft a handoff. Sending a DM requires an authorized messaging interface and explicit approval of the recipient and draft.
+Call the read-only `list_team` tool once with no arguments for availability questions. It returns a summary, counts, check-in timestamps, job titles and their sources, skills, ownership, current capacity, and Discord navigation links in one response. Connected AI clients can also call `find_teammate` to filter by skills or project ownership, or `get_daily_summary` for an automated Markdown standup report. Repeated calls within five seconds can reuse the same Discord snapshot while recalculating the current statuses. It uses the local Keychain credential. Clients that support persistent instructions can use the supplied prompt to ask about delegation for substantial tasks, get the team roster and draft a handoff. Sending a DM requires an authorized messaging interface and explicit approval of the recipient and draft.
 
 Grok Build can register the command as a [local stdio server](https://docs.x.ai/build/features/mcp-servers). The xAI API's [remote MCP integration](https://docs.x.ai/developers/tools/remote-mcp) requires a hosted server URL. For Dot, verify that the actual host can register or bridge the local stdio command, discover `list_team`, and complete a test call before using it for handoffs.
 

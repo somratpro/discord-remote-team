@@ -4,14 +4,37 @@ import Foundation
 @MainActor enum RemoteMCP {
     static let version = "2025-06-18"
     static let instructions = """
-    Ask whether the operator wants to delegate a substantial task. If they agree, call list_team once with {}. Clarify the deliverable if it is unclear. Start with checked-in people, then match the required skills and role. Quote the relevant skill in your reason. Prefer a qualified checked-in project owner, then a qualified checked-in backup, and explain a substitution. Offer equally qualified people together. If no checked-in person has the required skill or a suitable backup is missing, explain the gap and let the operator decide. Attendance alone does not confirm capacity. Respect a recorded focus period and confirm capacity with the teammate. Identify the chosen recipient by Discord user ID when names collide. Draft the goal, deliverable, completion criteria and any supplied deadline. Get explicit approval for the exact recipient and message before sending through an independently authorized interface. A Discord link opens navigation only. Keep the profile fallback available. Report delivery only after confirmed sending.
+    Ask whether the operator wants to delegate a substantial task. If they agree, call list_team once with {} or use find_teammate to filter by skills or roles. Clarify the deliverable if it is unclear. Start with checked-in people, then match the required skills and role. Quote the relevant skill in your reason. Prefer a qualified checked-in project owner, then a qualified checked-in backup, and explain a substitution. Offer equally qualified people together. If no checked-in person has the required skill or a suitable backup is missing, explain the gap and let the operator decide. Attendance alone does not confirm capacity. Respect a recorded focus period and confirm capacity with the teammate. Identify the chosen recipient by Discord user ID when names collide. Draft the goal, deliverable, completion criteria and any supplied deadline. Get explicit approval for the exact recipient and message before sending through an independently authorized interface. A Discord link opens navigation only. Keep the profile fallback available. Report delivery only after confirmed sending.
     """
-    static let tools: [[String: Any]] = [[
-        "name": "list_team",
-        "description": "Use once for who is active, on break, or out, or to find an available teammate for delegation. No arguments. Returns a summary, status counts, and the full attendance roster with roles, skills, ownership, capacity and Discord navigation links. Available teammates are checked in.",
-        "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false],
-        "annotations": ["readOnlyHint": true, "openWorldHint": true]
-    ]]
+    static let tools: [[String: Any]] = [
+        [
+            "name": "list_team",
+            "description": "Use once for who is active, on break, or out, or to find an available teammate for delegation. No arguments. Returns a summary, status counts, and the full attendance roster with roles, skills, ownership, capacity and Discord navigation links. Available teammates are checked in.",
+            "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false],
+            "annotations": ["readOnlyHint": true, "openWorldHint": true]
+        ],
+        [
+            "name": "find_teammate",
+            "description": "Finds available or on-break teammates matching specified skill, role, or project ownership criteria for delegation.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "skill": ["type": "string", "description": "Skill keyword to match (e.g. Swift, Marketing, SEO)"],
+                    "role": ["type": "string", "description": "Job role to match (e.g. Developer, Designer)"],
+                    "owns": ["type": "string", "description": "Project owned or backed up (e.g. Remote Team)"],
+                    "status": ["type": "string", "description": "Status filter: 'Checked in' (default), 'On break', or 'All'"]
+                ],
+                "additionalProperties": false
+            ],
+            "annotations": ["readOnlyHint": true, "openWorldHint": true]
+        ],
+        [
+            "name": "get_daily_summary",
+            "description": "Returns a clean standup summary of today's team attendance, active working hours, and all posted work updates.",
+            "inputSchema": ["type": "object", "properties": [String: Any](), "additionalProperties": false],
+            "annotations": ["readOnlyHint": true, "openWorldHint": true]
+        ]
+    ]
 
     static func run() async {
         await run(list: { try await live.listTeam() })
@@ -36,14 +59,92 @@ import Foundation
             case "tools/list":
                 response["result"] = ["tools": tools]
             case "tools/call":
-                if !validArguments(params["arguments"]) {
-                    response["error"] = ["code": -32602, "message": "list_team accepts an empty argument object or omitted arguments."]
-                } else if params["name"] as? String == "list_team" {
+                let toolName = params["name"] as? String ?? ""
+                if toolName == "list_team" {
+                    if !validArguments(params["arguments"]) {
+                        response["error"] = ["code": -32602, "message": "list_team accepts an empty argument object or omitted arguments."]
+                    } else {
+                        do {
+                            let roster = try await list()
+                            let data = try JSONSerialization.data(withJSONObject: roster, options: [.sortedKeys, .withoutEscapingSlashes])
+                            var result = content(String(decoding: data, as: UTF8.self), error: false)
+                            result["structuredContent"] = roster
+                            response["result"] = result
+                        } catch let limit as RateLimit {
+                            response["result"] = content("Discord rate-limited the request. Retry after \(Int(limit.seconds.rounded(.up))) seconds.", error: true)
+                        } catch {
+                            response["result"] = content(error.localizedDescription, error: true)
+                        }
+                    }
+                } else if toolName == "find_teammate" {
                     do {
                         let roster = try await list()
-                        let data = try JSONSerialization.data(withJSONObject: roster, options: [.sortedKeys, .withoutEscapingSlashes])
+                        let args = params["arguments"] as? [String: Any] ?? [:]
+                        let skillQuery = (args["skill"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let roleQuery = (args["role"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let ownsQuery = (args["owns"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        let statusFilter = (args["status"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Checked in"
+
+                        let teammates = (roster["teammates"] as? [[String: Any]]) ?? []
+                        let matches = teammates.filter { t in
+                            let status = t["status"] as? String ?? ""
+                            if statusFilter != "All" && status != statusFilter { return false }
+                            if let skill = skillQuery, !skill.isEmpty {
+                                let skills = (t["skills"] as? [String])?.map { $0.lowercased() } ?? []
+                                if !skills.contains(where: { $0.contains(skill) }) { return false }
+                            }
+                            if let role = roleQuery, !role.isEmpty {
+                                let r = (t["role"] as? String)?.lowercased() ?? ""
+                                if !r.contains(role) { return false }
+                            }
+                            if let proj = ownsQuery, !proj.isEmpty {
+                                let owns = (t["owns"] as? [String])?.map { $0.lowercased() } ?? []
+                                let backsUp = (t["backs_up"] as? [String])?.map { $0.lowercased() } ?? []
+                                if !owns.contains(where: { $0.contains(proj) }) && !backsUp.contains(where: { $0.contains(proj) }) { return false }
+                            }
+                            return true
+                        }
+                        let summary = "Found \(matches.count) matching teammate(s) for delegation."
+                        let output: [String: Any] = [
+                            "summary": summary,
+                            "count": matches.count,
+                            "matches": matches
+                        ]
+                        let data = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes])
                         var result = content(String(decoding: data, as: UTF8.self), error: false)
-                        result["structuredContent"] = roster
+                        result["structuredContent"] = output
+                        response["result"] = result
+                    } catch let limit as RateLimit {
+                        response["result"] = content("Discord rate-limited the request. Retry after \(Int(limit.seconds.rounded(.up))) seconds.", error: true)
+                    } catch {
+                        response["result"] = content(error.localizedDescription, error: true)
+                    }
+                } else if toolName == "get_daily_summary" {
+                    do {
+                        let roster = try await list()
+                        let teammates = (roster["teammates"] as? [[String: Any]]) ?? []
+                        let summaryText = roster["summary"] as? String ?? ""
+                        let asOf = roster["as_of"] as? String ?? ""
+                        var report = "## Daily Team Standup Summary (\(asOf))\n\n"
+                        report += "**Overview:** \(summaryText)\n\n"
+                        let active = teammates.filter { ($0["status"] as? String) == Status.inside.title }
+                        if !active.isEmpty {
+                            report += "### Checked In (\(active.count)):\n"
+                            for t in active {
+                                let name = t["name"] as? String ?? "Unknown"
+                                let role = t["role"] as? String ?? "No title"
+                                let since = t["status_since"] as? String ?? "—"
+                                report += "- **\(name)** (\(role)) — In since \(since)\n"
+                            }
+                        }
+                        let output: [String: Any] = [
+                            "summary": summaryText,
+                            "markdown": report,
+                            "roster": roster
+                        ]
+                        let data = try JSONSerialization.data(withJSONObject: output, options: [.sortedKeys, .withoutEscapingSlashes])
+                        var result = content(String(decoding: data, as: UTF8.self), error: false)
+                        result["structuredContent"] = output
                         response["result"] = result
                     } catch let limit as RateLimit {
                         response["result"] = content("Discord rate-limited the request. Retry after \(Int(limit.seconds.rounded(.up))) seconds.", error: true)

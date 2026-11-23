@@ -141,6 +141,7 @@ struct RosterView: View {
                 Button(action: settings) { Image(systemName: "gearshape") }
                     .help("Settings").accessibilityLabel("Settings")
                 Menu {
+                    Button("Copy today's standup summary") { state.copyStandupSummary() }
                     Button("Review team directory…", action: reviewDirectory).disabled(state.guild == nil)
                     Button("Copy AI setup prompt") { copyMCPPrompt() }
                     Button("Quit Remote Team") { NSApp.terminate(nil) }

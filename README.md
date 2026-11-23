@@ -15,7 +15,7 @@ Use standalone messages in your chosen channel. A break requires a check-in that
 
 Download the universal DMG from [GitHub Releases](https://github.com/somratpro/discord-remote-team/releases). Open it and drag **Remote Team** into **Applications**. These builds are ad hoc signed and have no Apple notarization. If Gatekeeper blocks the downloaded app, use [Apple’s instructions for opening an app you trust](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
 
-GitHub Actions tests and packages a DMG on main, pull requests, and manual runs. Push a version tag such as `v1.1` to publish a standalone DMG on Releases. Run `./package.sh` to produce the same DMG locally under `build/`.
+GitHub Actions tests and packages a DMG on main, pull requests, and manual runs. Push a version tag such as `v1.1.1` to publish a standalone DMG on Releases. Run `./package.sh` to produce the same DMG locally under `build/`.
 
 ## Build and connect
 

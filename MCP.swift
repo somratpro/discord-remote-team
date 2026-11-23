@@ -26,7 +26,7 @@ import Foundation
             switch method {
             case "initialize":
                 response["result"] = ["protocolVersion": version, "capabilities": ["tools": [:]],
-                                      "serverInfo": ["name": "remote-team", "version": "1.1"], "instructions": instructions] as [String: Any]
+                                      "serverInfo": ["name": "remote-team", "version": "1.1.1"], "instructions": instructions] as [String: Any]
             case "ping":
                 response["result"] = [:] as [String: Any]
             case "tools/list":

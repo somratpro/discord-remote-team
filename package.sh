@@ -11,7 +11,7 @@ trap 'rm -rf "$scratch"' EXIT
 ./build.sh "$scratch/staging"
 app="$scratch/staging/Remote Team.app"
 codesign --verify --strict "$app"
-xcrun lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/TeamCheckin"
+xcrun lipo "$app/Contents/MacOS/TeamCheckin" -verify_arch arm64 x86_64
 ln -s /Applications "$scratch/staging/Applications"
 cp README.md "$scratch/staging/Setup.md"
 

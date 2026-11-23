@@ -299,3 +299,9 @@ check(roster(posts: agingPosts, members: [], rules: rules).map(\.id) == [maya.id
 let oneSecondLater = Rules(now: now.addingTimeInterval(1), zone: TimeZone(identifier: "Asia/Dhaka")!)
 check(roster(posts: agingPosts, members: [], rules: oneSecondLater).isEmpty,
       "Roster expires a check-in exactly seven days later without a new message")
+
+check(detectDesignation(from: "Building useful things.\nDev Team Lead at Example Studio",
+                        recognized: ["Developer", "Lead"]) == "Dev Team Lead",
+      "About Me extraction keeps the full designation and leaves out the employer")
+check(detectDesignation(from: "I build audio tools.", recognized: ["Designer"]) == nil,
+      "Designation aliases match whole words")

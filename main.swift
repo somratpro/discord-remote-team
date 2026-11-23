@@ -31,7 +31,7 @@ final class RosterPanel: NSPanel {
         countItem.button?.action = #selector(toggleRoster)
         panel = RosterPanel(contentRect: NSRect(x: 0, y: 0, width: 322, height: 454),
                         styleMask: [.borderless, .utilityWindow], backing: .buffered, defer: false)
-        panel.title = "Remote Team"; panel.isReleasedWhenClosed = false
+        panel.isReleasedWhenClosed = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true

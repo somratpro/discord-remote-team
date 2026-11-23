@@ -55,7 +55,7 @@ Click an avatar to try the Discord DM route automatically. Existing saved DM lin
 
 Open the roster menu and choose **Review team directory**. The app reads the check-in author's assigned Discord roles and the server's role catalogue. Approve exact job labels together, and teammates with those assignments inherit the title. Edit the recognized-title list if your server uses other job labels. A person with several approved roles can have a preferred role selected. It stays valid while their role is assigned and approved.
 
-For a teammate without a usable role, open their Discord profile and enter the explicit job title. Clear the title field to restore role discovery. The directory can also hold skills, projects owned, backup responsibilities and optional operator-entered capacity. Capacity expires at the next team-day boundary by default, with an editable expiry. It does not change attendance counts. Updates show their own last successful read and link to the selected channel.
+For a designation from Discord, open the teammate’s profile, copy the job-title line from **About Me**, and click **Paste from About Me** in the title review. For example, “Dev Team Lead at Example Studio” becomes “Dev Team Lead.” Discord’s documented bot API does not expose About Me, so the copied text supplies the title. The app saves the designation only.
 
 Use **Export saved directory** and **Import** to move the saved titles, skills and ownership between Macs for the same Discord server. Import previews new and conflicting entries before saving. Each Mac keeps its own capacity, bot credential and DM links.
 

@@ -34,11 +34,12 @@ struct RosterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Remote Team").font(.headline).accessibilityAddTraits(.isHeader)
+                Text("Remote Team").font(.headline).lineLimit(1).accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button(action: hide) {
                     Image(systemName: "xmark").font(.caption.weight(.semibold))
                         .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
                 }.buttonStyle(.borderless)
                     .help("Hide roster").accessibilityLabel("Hide roster")
             }.padding(.horizontal, 16).padding(.vertical, 8)
@@ -342,6 +343,15 @@ struct DirectoryView: View {
                 Text(id).font(.caption.monospaced()).foregroundStyle(.secondary)
                 Spacer()
                 Button("Open Discord profile") { openProfile(person) }.disabled(state.sample)
+                Button("Paste from About Me") {
+                    guard let text = NSPasteboard.general.string(forType: .string),
+                          let title = detectDesignation(from: text, recognized: items(draft.recognizedTitles)) else {
+                        error = "Copy the job-title line from About Me, or enter the designation directly."
+                        return
+                    }
+                    draft.people[id, default: TeamProfile()].title = title
+                    error = ""
+                }
             }
             if let bio = resolved.bio, !bio.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

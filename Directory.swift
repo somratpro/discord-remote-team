@@ -29,11 +29,6 @@ extension Discord {
         guard isID(id) else { throw Problem("Invalid Discord user ID.") }
         return try await get("/guilds/\(channel.guild)/members/\(id)", as: GuildMember.self)
     }
-
-    func userProfile(_ id: String) async throws -> User {
-        guard isID(id) else { throw Problem("Invalid Discord user ID.") }
-        return try await get("/users/\(id)", as: User.self)
-    }
 }
 
 struct TeamProfile: Codable, Equatable {
@@ -52,10 +47,16 @@ struct TeamProfile: Codable, Equatable {
 }
 
 func detectDesignation(from text: String, recognized: [String]) -> String? {
-    let lower = text.lowercased()
-    for title in recognized {
-        if lower.contains(title.lowercased()) { return title }
+    func containsTitle(_ title: String) -> Bool {
+        let escaped = NSRegularExpression.escapedPattern(for: title)
+        return text.range(of: "(?<![\\p{L}\\p{N}_])" + escaped + "(?![\\p{L}\\p{N}_])",
+                          options: [.regularExpression, .caseInsensitive]) != nil
     }
+
+    let titles = (recognized + ["Dev Team Lead", "Development Team Lead", "Team Lead", "SEO Specialist"])
+        .filter { !$0.isEmpty }.sorted { $0.count > $1.count }
+    if let title = titles.first(where: containsTitle) { return title }
+
     let aliases: [(key: String, title: String)] = [
         ("developer", "Developer"), ("dev", "Developer"), ("engineer", "Developer"),
         ("programmer", "Developer"), ("designer", "Designer"), ("ui/ux", "Designer"),
@@ -64,7 +65,7 @@ func detectDesignation(from text: String, recognized: [String]) -> String? {
         ("writer", "Writer"), ("copywriter", "Writer"), ("lead", "Lead"), ("admin", "Admin")
     ]
     for (key, title) in aliases {
-        if lower.contains(key) { return title }
+        if containsTitle(key) { return title }
     }
     return nil
 }
@@ -195,19 +196,18 @@ struct DirectoryTransfer: Codable {
                 }
             }
         }
-        guard now < rolesUntil, !evidence.roles.isEmpty else {
+        guard now < rolesUntil else {
             evidence.incomplete = now >= rolesUntil
             return evidence
         }
         for id in Set(ids).sorted() where now >= (membersUntil[id] ?? .distantPast) {
             evidence.members[id] = nil
+            evidence.bios[id] = nil
             guard clock() >= retryAt, !Task.isCancelled else { continue }
             do {
                 let member = try await api.guildMember(id)
                 evidence.members[id] = member.roles
                 if let bio = member.user?.bio, !bio.isEmpty {
-                    evidence.bios[id] = bio
-                } else if let user = try? await api.userProfile(id), let bio = user.bio, !bio.isEmpty {
                     evidence.bios[id] = bio
                 }
                 membersUntil[id] = clock().addingTimeInterval(lifetime)

@@ -12,6 +12,7 @@ trap 'rm -rf "$scratch"' EXIT
 app="$scratch/staging/Remote Team.app"
 codesign --verify --strict "$app"
 [[ "$(xcrun lipo -archs "$app/Contents/MacOS/TeamCheckin")" == arm64 ]]
+xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
 ln -s /Applications "$scratch/staging/Applications"
 cp README.md "$scratch/staging/Setup.md"
 

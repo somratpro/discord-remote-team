@@ -296,6 +296,22 @@ import SwiftUI
         }
     }
 
+    /// Resolves the real DM channel ID via the Discord API, saves it, and returns the channel URL.
+    /// Falls back to the user-ID candidate URL if the API call fails.
+    func resolveDM(for person: Person) async -> URL? {
+        guard !sample, let ch = Channel(channelLink) else { return candidateDM(person.id) }
+        let api = Discord(token: token, channel: ch, session: session)
+        do {
+            let channelID = try await api.createDM(userID: person.id)
+            let link = "https://discord.com/channels/@me/" + channelID
+            if let url = dmURL(link) {
+                prefs.set(url.absoluteString, forKey: "dm." + person.id)
+                return url
+            }
+        } catch {}
+        return candidateDM(person.id)
+    }
+
     func dm(_ id: String) -> String { prefs.string(forKey: "dm." + id) ?? "" }
     func openBrowser(_ url: URL) {
         if !browser.isEmpty, let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser) {

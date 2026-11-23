@@ -31,6 +31,7 @@ struct RosterView: View {
     let openProfile: (Person) -> Void
     let reviewDirectory: () -> Void
     let handoff: (Person) -> Void
+    let editDM: (Person) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -82,6 +83,7 @@ struct RosterView: View {
                                 .help("Open DM with " + p.user.name)
                                 .contextMenu {
                                     Button("Open Discord profile") { openProfile(p) }.disabled(state.sample)
+                                    Button("Set Discord DM link…") { editDM(p) }.disabled(state.sample)
                                     Button("Prepare handoff…") { handoff(p) }
                                 }
                                 if let update = p.workUpdate {

@@ -285,6 +285,17 @@ import SwiftUI
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
+    func saveDM(_ raw: String, for id: String) throws {
+        let key = "dm." + id
+        if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            prefs.removeObject(forKey: key)
+        } else if let url = dmURL(raw) {
+            prefs.set(url.absoluteString, forKey: key)
+        } else {
+            throw Problem("Enter a Discord DM conversation or message link.")
+        }
+    }
+
     func dm(_ id: String) -> String { prefs.string(forKey: "dm." + id) ?? "" }
     func openBrowser(_ url: URL) {
         if !browser.isEmpty, let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: browser) {

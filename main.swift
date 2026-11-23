@@ -14,8 +14,11 @@ final class RosterPanel: NSPanel {
     let state = State()
     let photos = Photos()
     var countItem: NSStatusItem!
-    var faces = [NSStatusItem]()
-    var shown = [Person]()
+    var avatarItem: NSStatusItem?
+    private var avatarPeople = [Person]()
+    private let avatarSize: CGFloat = 20
+    private let avatarGap: CGFloat = 2
+    private var avatarStride: CGFloat { avatarSize + avatarGap }
     var panel: NSPanel!
     var setup: NSWindow?
     var directoryWindow: NSWindow?
@@ -43,7 +46,8 @@ final class RosterPanel: NSPanel {
             hide: { [weak self] in self?.panel.orderOut(nil) },
             pin: { [weak self] in self?.togglePin() }, openDM: { [weak self] p in self?.dm(p) }, openProfile: { [weak self] p in self?.openProfile(p) },
             reviewDirectory: { [weak self] in self?.reviewDirectory() },
-            handoff: { [weak self] p in self?.handoff(p) }))
+            handoff: { [weak self] p in self?.handoff(p) },
+            editDM: { [weak self] p in self?.editDM(p) }))
         state.objectWillChange.merge(with: photos.objectWillChange).sink { [weak self] _ in self?.queueRender() }.store(in: &subscriptions)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wake), name: NSWorkspace.didWakeNotification, object: nil)
         timer = Timer.scheduledTimer(timeInterval: 20, target: self, selector: #selector(poll), userInfo: nil, repeats: true)
@@ -71,22 +75,65 @@ final class RosterPanel: NSPanel {
         countItem.button?.image = NSImage(systemSymbolName: state.mode == "Offline" ? "exclamationmark.triangle" : "person.2.fill", accessibilityDescription: "Remote Team")
         countItem.button?.imagePosition = .imageLeading
         countItem.button?.toolTip = "Remote Team · " + state.detail
-        shown = state.faces ? Array(inShift.prefix(3)) : []
-        while faces.count > shown.count { NSStatusBar.system.removeStatusItem(faces.removeLast()) }
-        while faces.count < shown.count {
-            let item = NSStatusBar.system.statusItem(withLength: 25)
-            item.button?.target = self; item.button?.action = #selector(faceClick(_:))
-            faces.append(item)
+        renderAvatars(state.faces ? Array(inShift.prefix(3)) : [])
+    }
+
+    private func renderAvatars(_ people: [Person]) {
+        avatarPeople = people
+        guard !people.isEmpty else {
+            if let avatarItem { NSStatusBar.system.removeStatusItem(avatarItem) }
+            avatarItem = nil
+            return
         }
-        for (i,p) in shown.enumerated() {
-            let button = faces[i].button
-            photos.fetch(p.user)
-            button?.tag = i
-            button?.image = avatar(p.user, status: p.status)
-            button?.toolTip = p.user.name + " · " + state.subtitle(p) + (state.mode == "Live" ? "" : " · " + state.mode)
-            button?.setAccessibilityLabel("Open DM with " + p.user.name)
+        let width = CGFloat(people.count) * avatarStride + avatarGap
+        if avatarItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: width)
+            item.button?.target = self
+            item.button?.action = #selector(avatarClick(_:))
+            item.button?.imagePosition = .imageOnly
+            item.button?.setAccessibilityLabel("Open teammate Discord conversations")
+            avatarItem = item
+        }
+        let pictures = people.map { avatar($0.user, status: $0.status) }
+        let spacing = avatarStride
+        let size = avatarSize
+        avatarItem?.length = width
+        avatarItem?.button?.image = NSImage(size: NSSize(width: width, height: size), flipped: false) { _ in
+            for (index, picture) in pictures.enumerated() {
+                picture.draw(in: NSRect(x: spacing * CGFloat(index) + spacing - size,
+                                       y: 0, width: size, height: size))
+            }
+            return true
+        }
+        avatarItem?.button?.toolTip = people.map { $0.user.name + " · " + state.subtitle($0) }.joined(separator: "\n")
+        for person in people { photos.fetch(person.user) }
+    }
+
+    @objc private func avatarClick(_ sender: NSStatusBarButton) {
+        if let event = NSApp.currentEvent, event.type == .leftMouseUp, let window = sender.window {
+            let location = sender.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+            let stripWidth = CGFloat(avatarPeople.count) * avatarStride + avatarGap
+            let stripX = sender.bounds.midX - stripWidth / 2
+            let index = Int(floor((location.x - stripX - avatarGap / 2) / avatarStride))
+            if avatarPeople.indices.contains(index) { dm(avatarPeople[index]) }
+            return
+        }
+
+        let menu = NSMenu()
+        for person in avatarPeople {
+            let item = menu.addItem(withTitle: person.user.name, action: #selector(avatarMenuClick(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = person.id
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.minY), in: sender)
+    }
+
+    @objc private func avatarMenuClick(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? String, let person = avatarPeople.first(where: { $0.id == id }) {
+            dm(person)
         }
     }
+
     func avatar(_ user: User, status: Status) -> NSImage {
         let photo = photos.images[Photos.key(user)]
         return NSImage(size: NSSize(width: 20, height: 20), flipped: false) { rect in
@@ -106,9 +153,6 @@ final class RosterPanel: NSPanel {
             }
             return true
         }
-    }
-    @objc func faceClick(_ sender: NSStatusBarButton) {
-        if shown.indices.contains(sender.tag) { dm(shown[sender.tag]) }
     }
     func togglePin() {
         state.pinned.toggle()
@@ -176,6 +220,28 @@ final class RosterPanel: NSPanel {
                 self.dm(person)
             },
             openProfile: { [weak self] in self?.openProfile(person) }))
+    }
+
+    func editDM(_ person: Person) {
+        guard !state.sample else { return }
+        let alert = NSAlert()
+        alert.messageText = "Discord DM link for " + person.user.name
+        alert.informativeText = "Paste the link copied from the Discord conversation. Leave it blank to reset."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
+        field.stringValue = state.dm(person.id)
+        field.placeholderString = "https://discord.com/channels/@me/…"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        while alert.runModal() == .alertFirstButtonReturn {
+            do {
+                try state.saveDM(field.stringValue, for: person.id)
+                return
+            } catch {
+                alert.informativeText = error.localizedDescription
+            }
+        }
     }
 
     func dm(_ person: Person) {

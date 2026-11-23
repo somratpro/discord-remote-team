@@ -49,7 +49,7 @@ Each team creates a free Discord bot to read check-ins directly from their serve
 5. **Grant channel access**: In Discord, make sure the bot has access to view and read message history in your check-in channel (and optional work updates channel). Right-click the channel name and select **Copy Channel Link**.
 6. **Connect the Mac app**: Open Remote Team on your Mac, go to **Settings** (gear icon), paste the channel URL and bot token, and click **Save & connect**. Each Mac stores the bot token securely in macOS Keychain.
 
-Click an avatar to try the Discord DM route automatically. Existing saved DM links take precedence. Discord may require the actual conversation ID for some people. If Discord opens Friends, right-click the person in the Remote Team roster, choose **Open Discord profile**, and use **Message** in Discord. The desktop profile shortcut uses the Discord app if installed.
+Click an avatar to try the Discord DM route automatically. Right-click a teammate and choose **Set Discord DM link** to save the link copied from their conversation. A saved link takes precedence. Discord may require the actual conversation ID for some people. If Discord opens Friends, right-click the person in the Remote Team roster, choose **Open Discord profile**, and use **Message** in Discord. The desktop profile shortcut uses the Discord app if installed.
 
 ## Review the team directory
 

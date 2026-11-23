@@ -15,7 +15,7 @@ Use standalone messages in your chosen channel. A break requires a check-in that
 
 ## Download and install
 
-Download `Remote-Team-macOS-arm64.dmg` from [GitHub Releases](https://github.com/somratpro/discord-remote-team/releases). Open it and drag **Remote Team** into **Applications**. These builds are ad hoc signed and have no Apple notarization. The quarantine attribute is stripped during packaging so Gatekeeper should not block the app after dragging it to Applications.
+Download `Remote-Team-macOS-arm64.dmg` from [GitHub Releases](https://github.com/somratpro/discord-remote-team/releases). Open it, drag **Remote Team** into **Applications**, then double-click **Install Remote Team.command** in the same DMG window. Terminal will open and strip the macOS quarantine flag so the app launches normally. These builds are ad hoc signed and have no Apple notarization. Alternatively, go to **System Settings – Privacy – Security** and click **Open Anyway** after the first blocked launch.
 
 GitHub Actions tests and packages a DMG on main, pull requests, and manual runs. Run `./package.sh` to package a DMG locally under `build/`.
 

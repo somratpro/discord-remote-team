@@ -1,6 +1,7 @@
 {
   "name": "discord-remote-team",
-  "private": true,
+  "version": "1.0.0",
+  "license": "MIT",
   "scripts": {
     "release:patch": "node scripts/release.mjs patch",
     "release:minor": "node scripts/release.mjs minor",

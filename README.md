@@ -1,5 +1,7 @@
 # Remote Team
 
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A native macOS menu bar app for teammates who check in through Discord. Requires an Apple silicon Mac running macOS 13 or later.
 
 | Discord message | Status |
@@ -76,3 +78,11 @@ test_dir="$(mktemp -d)"
 xcrun swiftc Discord.swift Directory.swift MCP.swift Tests/main.swift -o "$test_dir/remote-team-tests"
 "$test_dir/remote-team-tests"
 ```
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, code map, testing requirements and pull request process.
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright 2024 Somrat Claw.

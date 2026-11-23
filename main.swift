@@ -18,6 +18,8 @@ final class RosterPanel: NSPanel {
     var shown = [Person]()
     var panel: NSPanel!
     var setup: NSWindow?
+    var directoryWindow: NSWindow?
+    var handoffWindow: NSWindow?
     var timer: Timer?
     var subscriptions = Set<AnyCancellable>()
     var renderPending = false
@@ -39,7 +41,9 @@ final class RosterPanel: NSPanel {
         panel.delegate = self
         panel.contentView = NSHostingView(rootView: RosterView(state: state, photos: photos, settings: { [weak self] in self?.settings() },
             hide: { [weak self] in self?.panel.orderOut(nil) },
-            pin: { [weak self] in self?.togglePin() }, openDM: { [weak self] p in self?.dm(p) }, openProfile: { [weak self] p in self?.openProfile(p) }))
+            pin: { [weak self] in self?.togglePin() }, openDM: { [weak self] p in self?.dm(p) }, openProfile: { [weak self] p in self?.openProfile(p) },
+            reviewDirectory: { [weak self] in self?.reviewDirectory() },
+            handoff: { [weak self] p in self?.handoff(p) }))
         state.objectWillChange.merge(with: photos.objectWillChange).sink { [weak self] _ in self?.queueRender() }.store(in: &subscriptions)
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(wake), name: NSWorkspace.didWakeNotification, object: nil)
         timer = Timer.scheduledTimer(timeInterval: 20, target: self, selector: #selector(poll), userInfo: nil, repeats: true)
@@ -138,6 +142,41 @@ final class RosterPanel: NSPanel {
         setup = window
         window.center(); NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
     }
+    private func editorWindow<Content: View>(_ title: String, view: Content) -> NSWindow {
+        let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = title
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: view)
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        return window
+    }
+
+    func reviewDirectory() {
+        guard let guild = state.guild else { return }
+        if let window = directoryWindow, window.isVisible {
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        directoryWindow = editorWindow("Team Directory", view: DirectoryView(state: state, guild: guild,
+            openProfile: { [weak self] in self?.openProfile($0) }, close: { [weak self] in
+                self?.directoryWindow?.close()
+                self?.showRoster()
+            }))
+    }
+
+    func handoff(_ person: Person) {
+        handoffWindow?.close()
+        let guild = state.guild
+        handoffWindow = editorWindow("Prepare Handoff", view: HandoffView(person: person, sample: state.sample,
+            openDM: { [weak self] in
+                guard let self, self.state.guild == guild else { return }
+                self.dm(person)
+            },
+            openProfile: { [weak self] in self?.openProfile(person) }))
+    }
+
     func dm(_ person: Person) {
         guard !state.sample else { return }
         if let url = dmURL(state.dm(person.id)) ?? candidateDM(person.id) {

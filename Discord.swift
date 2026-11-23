@@ -28,6 +28,7 @@ struct Channel: Equatable {
         guard let p = linkParts(raw), p.count == 3, p[0] == "channels", isID(p[1]), isID(p[2]) else { return nil }
         guild = p[1]; id = p[2]
     }
+    var url: URL { URL(string: "https://discord.com/channels/" + guild + "/" + id)! }
     func messageURL(_ messageID: String) -> URL? {
         guard isID(messageID) else { return nil }
         return URL(string: "https://discord.com/channels/" + guild + "/" + id + "/" + messageID)
@@ -72,12 +73,14 @@ enum Status: Int, CaseIterable {
     case inside, onBreak, outside, earlier, unknown
     var title: String { ["Checked in", "On break", "Checked out", "Last in before today", "No update today"][rawValue] }
 }
+let rosterRetention: TimeInterval = 7 * 24 * 60 * 60
 let shiftLimit: TimeInterval = 9 * 60 * 60
 
 struct Person: Identifiable {
     var user: User
     var id: String { user.id }
     var status = Status.unknown
+    var lastCheckIn: Date?
     var firstIn: Date?
     var last: Date?
     var autoCheckedOut = false
@@ -97,7 +100,7 @@ struct Rules {
         var c = Calendar(identifier: .gregorian)
         c.timeZone = zone
         today = c.startOfDay(for: now)
-        since = c.date(byAdding: .day, value: -7, to: today)!
+        since = now.addingTimeInterval(-rosterRetention)
     }
 }
 let fractionalDate: ISO8601DateFormatter = {
@@ -145,16 +148,18 @@ func roster(posts: [Post], members: [User], rules: Rules) -> [Person] {
     for user in members where user.bot != true { people[user.id] = Person(user: user) }
     for post in posts.sorted(by: { (UInt64($0.id) ?? 0) < (UInt64($1.id) ?? 0) }) {
         guard post.author.bot != true, post.webhook_id == nil, [0,19].contains(post.type),
-              let date = postDate(post), date >= rules.since else { continue }
+              let date = postDate(post), date > rules.since else { continue }
         guard let command = AttendanceCommand(post.content) else { continue }
         var person = people[post.author.id] ?? Person(user: post.author)
         person.user = post.author
         let today = date >= rules.today
         switch command {
         case .in:
+            person.lastCheckIn = date
             person.status = today ? .inside : .earlier
             if today && person.firstIn == nil { person.firstIn = date }
         case .out:
+            guard person.lastCheckIn != nil else { continue }
             person.status = today ? .outside : .unknown
         case .break:
             guard today && person.status == .inside else { continue }
@@ -216,7 +221,7 @@ struct Discord {
     let channel: Channel
     var session: URLSession = .shared
     func get<T: Decodable>(_ suffix: String, as: T.Type) async throws -> T {
-        let url = URL(string: "https://discord.com/api/v10/channels/" + channel.id + "/messages" + suffix)!
+        let url = URL(string: "https://discord.com/api/v10" + suffix)!
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
         request.setValue("Bot " + token, forHTTPHeaderField: "Authorization")
         let (data, response) = try await session.data(for: request)
@@ -233,7 +238,7 @@ struct Discord {
         }
     }
     func page(before id: String? = nil) async throws -> [Post] {
-        try await get("?limit=100" + (id.map { "&before=" + $0 } ?? ""), as: [Post].self)
+        try await get("/channels/\(channel.id)/messages?limit=100" + (id.map { "&before=" + $0 } ?? ""), as: [Post].self)
     }
     func history(first: [Post], since: Date) async throws -> [Post] {
         var result = first
@@ -246,5 +251,29 @@ struct Discord {
             page = next
         }
         return result
+    }
+}
+
+struct MessageWindow {
+    let posts: [Post]
+    let rebuilt: Bool
+}
+
+extension Discord {
+    func window(previous: [Post], since: Date, rebuild: Bool) async throws -> MessageWindow {
+        let first = try await page()
+        let oldest = first.last.flatMap { UInt64($0.id) } ?? 0
+        let newestCached = previous.first.flatMap { UInt64($0.id) }
+        let gap = first.count == 100 && (newestCached.map { oldest > $0 } ?? true)
+        let reconcile = rebuild || gap
+        let posts: [Post]
+        if reconcile {
+            posts = try await history(first: first, since: since)
+        } else if first.count < 100 {
+            posts = first
+        } else {
+            posts = first + previous.filter { (UInt64($0.id) ?? 0) < oldest }
+        }
+        return MessageWindow(posts: posts.filter { postDate($0).map { $0 >= since } ?? false }, rebuilt: reconcile)
     }
 }

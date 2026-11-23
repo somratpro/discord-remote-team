@@ -13,6 +13,40 @@ import SwiftUI
     var channelLink: String { prefs.string(forKey: "channel") ?? defaultChannel }
     var updatesLink: String { prefs.string(forKey: "updatesChannel") ?? "" }
     @Published var updatesWarning: String?
+    @Published var lastUpdatesSync: Date?
+    @Published var directory = TeamDirectory()
+    @Published var evidence = RoleEvidence()
+    @Published var capacity: [String: Capacity] = [:]
+    var guild: String? { sample ? "preview" : Channel(channelLink)?.guild }
+    var updatesChannel: Channel? { Channel(updatesLink) ?? Channel(channelLink) }
+    private var discovery = RoleDiscovery()
+    private var roleTask: Task<Void, Never>?
+
+    func saveDirectory(_ value: TeamDirectory, capacity: [String: Capacity], guild: String) throws {
+        guard guild == self.guild else { throw Problem("The selected Discord server changed.") }
+        if !sample {
+            try value.save(guild, prefs: prefs)
+            try TeamDirectory.saveCapacity(capacity, guild: guild, prefs: prefs)
+        }
+        directory = value
+        self.capacity = capacity
+    }
+
+    func profile(_ person: Person) -> ResolvedProfile {
+        directory.resolve(person.id, evidence: evidence)
+    }
+
+    private func discover(_ api: Discord, people: [Person], generation: Int) {
+        guard roleTask == nil else { return }
+        let discovery = self.discovery
+        roleTask = Task {
+            let result = await discovery.load(api, ids: people.map(\.id))
+            guard self.generation == generation, !Task.isCancelled else { return }
+            evidence = result
+            roleTask = nil
+        }
+    }
+
     var zoneID: String { prefs.string(forKey: "zone") ?? defaultZone }
     var browser: String { prefs.string(forKey: "browser") ?? "" }
     var zone: TimeZone { TimeZone(identifier: zoneID) ?? .current }
@@ -24,9 +58,12 @@ import SwiftUI
     private var runner: Task<Void, Never>?
     private var previous = [Post]()
     private var workPosts = [Post]()
+    private var workFullAt = Date.distantPast
+    private var workDay: Date?
     private var updatesRetryAt = Date.distantPast
     private var fullAt = Date.distantPast
     private var fullDay: Date?
+    private var rosterDay: Date?
     private var nextAllowed = Date.distantPast
     private var syncing = false
     private var generation = 0
@@ -39,7 +76,7 @@ import SwiftUI
     func start() {
         do { token = try Keychain.read() }
         catch { detail = error.localizedDescription }
-        if hasConnection { refresh(full: true) }
+        if hasConnection { reset(); refresh(full: true) }
     }
     func save(channel: String, updates: String, zone: String, newToken: String, browser: String, faces: Bool) throws {
         guard Channel(channel) != nil else { throw Problem("Paste a Discord server channel link.") }
@@ -61,11 +98,25 @@ import SwiftUI
         runner?.cancel(); generation += 1; syncing = false
         previous = []; workPosts = []; people = []; fullAt = .distantPast
         updatesWarning = nil; updatesRetryAt = .distantPast
-        lastSync = nil; fullDay = nil
+        lastSync = nil; fullDay = nil; rosterDay = nil; lastUpdatesSync = nil
+        workFullAt = .distantPast; workDay = nil
+        roleTask?.cancel(); roleTask = nil; discovery = RoleDiscovery()
+        evidence = RoleEvidence()
+        directory = Channel(channelLink).map { TeamDirectory.load($0.guild, prefs: prefs) } ?? TeamDirectory()
+        capacity = Channel(channelLink).map { TeamDirectory.capacity($0.guild, prefs: prefs) } ?? [:]
     }
     func preview() {
         reset()
         mode = "Preview"; detail = "Sample teammates · disconnected from Discord"
+        directory = TeamDirectory()
+        capacity = [:]
+        directory.people["sample-0"] = TeamProfile(title: "Developer and macOS Accessibility Engineering Lead", skills: ["Swift", "macOS"], owns: ["Remote Team"])
+        directory.people["sample-3"] = TeamProfile(title: "Marketer", skills: ["email campaigns", "copywriting"])
+        let developer = GuildRole(id: "sample-developer", name: "Developer", managed: false)
+        let analyst = GuildRole(id: "sample-analyst", name: "SEO Analyst", managed: false)
+        directory.approved[developer.id] = developer.name
+        evidence = RoleEvidence(roles: [developer.id: developer, analyst.id: analyst],
+                                members: ["sample-1": [developer.id], "sample-2": [analyst.id]])
         let names = ["Maya Ahmed", "Arif Khan", "Nadia Islam", "Leo Chen"]
         let states: [Status] = [.inside,.onBreak,.outside,.unknown]
         people = names.enumerated().map { i, n in
@@ -87,10 +138,13 @@ import SwiftUI
     func refresh(full: Bool = false) {
         guard !sample, hasConnection else { return }
         let now = Date()
-        if people.contains(where: { $0.checkoutDeadline.map { $0 <= now } ?? false }) {
-            if let channel = Channel(updatesLink) ?? Channel(channelLink) {
-                people = rosterWithUpdates(posts: previous, updates: workPosts, channel: channel, rules: Rules(now: now, zone: zone))
-            }
+        let localRules = Rules(now: now, zone: zone)
+        let needsUpdate = rosterDay != localRules.today || people.contains { person in
+            (person.checkoutDeadline.map { $0 <= now } ?? false) ||
+            (person.lastCheckIn.map { $0 <= localRules.since } ?? false)
+        }
+        if lastSync != nil, needsUpdate, let channel = updatesChannel {
+            presentRoster(channel: channel, rules: localRules)
         }
         guard !syncing, Date() >= nextAllowed,
               let ch = Channel(channelLink) else { return }
@@ -105,7 +159,7 @@ import SwiftUI
             do {
                 let rules = Rules(now: Date(), zone: zone)
                 async let separate = fetchSeparateUpdates
-                    ? loadWorkUpdates(channel: updateChannel, since: rules.today)
+                    ? loadWorkUpdates(channel: updateChannel, since: rules.today, full: full)
                     : nil
                 let first = try await api.page()
                 let oldest = first.last.flatMap { UInt64($0.id) } ?? 0
@@ -116,7 +170,6 @@ import SwiftUI
                     posts = try await api.history(first: first, since: rules.since)
                 } else if first.count < 100 { posts = first }
                 else { posts = first + previous.filter { (UInt64($0.id) ?? 0) < oldest } }
-                let updates = await separate
                 try Task.checkCancellation()
                 guard generation == requestID else { return }
                 if first.isEmpty {
@@ -129,10 +182,21 @@ import SwiftUI
                 previous = posts
                 if updateChannel == ch {
                     workPosts = posts
-                } else if let updates {
+                    lastUpdatesSync = Date()
+                }
+                let attendanceRules = Rules(now: Date(), zone: zone)
+                presentRoster(channel: updateChannel, rules: attendanceRules)
+                lastSync = Date(); mode = "Live"
+                detail = people.isEmpty ? "No check-ins in the last seven days." : "Updates every 20 seconds"
+                discover(api, people: roster(posts: posts, members: [], rules: attendanceRules), generation: requestID)
+                if let updates = await separate {
+                    try Task.checkCancellation()
+                    guard generation == requestID else { return }
                     switch updates {
-                    case .success(let messages):
-                        workPosts = messages
+                    case .success(let (snapshot, readAt)):
+                        workPosts = snapshot.posts
+                        if snapshot.rebuilt { workFullAt = readAt; workDay = rules.today }
+                        lastUpdatesSync = readAt
                         updatesWarning = nil
                     case .failure(let error):
                         let delay = (error as? RateLimit)?.seconds ?? 20
@@ -141,10 +205,8 @@ import SwiftUI
                             ? "Discord requested a pause."
                             : "Check the updates channel and the bot’s permissions.")
                     }
+                    presentRoster(channel: updateChannel, rules: Rules(now: Date(), zone: zone))
                 }
-                people = rosterWithUpdates(posts: posts, updates: workPosts, channel: updateChannel, rules: rules)
-                lastSync = Date(); mode = "Live"
-                detail = people.isEmpty ? "No check-ins found in the last eight calendar days." : "Updates every 20 seconds"
             } catch {
                 guard generation == requestID, !Task.isCancelled else { return }
                 mode = "Offline"
@@ -155,14 +217,28 @@ import SwiftUI
             }
         }
     }
-    private func loadWorkUpdates(channel: Channel, since: Date) async -> Result<[Post], Error> {
+    private func presentRoster(channel: Channel, rules: Rules) {
+        people = rosterWithUpdates(posts: previous, updates: workPosts, channel: channel, rules: rules)
+        rosterDay = rules.today
+    }
+
+    private func loadWorkUpdates(channel: Channel, since: Date, full: Bool) async -> Result<(MessageWindow, Date), Error> {
         let api = Discord(token: token, channel: channel, session: session)
+        let initial = workPosts
+        let rebuild = full || workDay != since || Date().timeIntervalSince(workFullAt) >= 300
         do {
-            let first = try await api.page()
-            return .success(try await api.history(first: first, since: since))
+            let window = try await api.window(previous: initial, since: since, rebuild: rebuild)
+            return .success((window, Date()))
         } catch {
             return .failure(error)
         }
+    }
+
+    func updateReadTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeZone = zone
+        formatter.dateFormat = "MMM d, h:mm a"
+        return formatter.string(from: date)
     }
 
     func time(_ date: Date?) -> String {

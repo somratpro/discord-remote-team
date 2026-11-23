@@ -2,7 +2,7 @@ import Foundation
 
 func check(_ value: @autoclosure () -> Bool, _ name: String) {
     guard value() else { fatalError(name) }
-    print("PASS " + name)
+    if !CommandLine.arguments.contains("--mcp-test") { print("PASS " + name) }
 }
 let now = plainDate.date(from: "2026-11-22T02:30:00Z")!
 let rules = Rules(now: now, zone: TimeZone(identifier: "Asia/Dhaka")!)
@@ -111,3 +111,193 @@ check(separateRoster[0].workUpdate?.url.absoluteString.hasSuffix("/1000000000000
 check(separateRoster[1].id == silent.id && separateRoster[1].status == .unknown, "Update-only author has no attendance update")
 let combined = [events[0], workMessages[0]]
 check(rosterWithUpdates(posts: combined, updates: combined, channel: channel, rules: rules)[0].workUpdate?.text == "Testing checkout", "Same-channel messages attach to attendance")
+
+let suite = "RemoteTeamTests." + UUID().uuidString
+let prefs = UserDefaults(suiteName: suite)!
+defer { prefs.removePersistentDomain(forName: suite) }
+prefs.set(example, forKey: "channel")
+let developer = GuildRole(id: "100000000000000030", name: "Developer", managed: false)
+let analyst = GuildRole(id: "100000000000000031", name: "SEO Analyst", managed: false)
+let admin = GuildRole(id: "100000000000000032", name: "Admin", managed: false)
+let integration = GuildRole(id: "100000000000000033", name: "Dev Team Lead", managed: true)
+let everyone = GuildRole(id: channel.guild, name: "@everyone", managed: false)
+let duplicate = User(id: arif.id, username: maya.name)
+let nadia = User(id: "100000000000000034", username: "Nadia")
+let leo = User(id: "100000000000000035", username: "Leo")
+let syntheticPosts = [
+    post(26, leo, "in", "2026-11-22T02:00:00Z"),
+    post(25, nadia, "break", "2026-11-22T02:10:00Z"),
+    post(24, nadia, "in", "2026-11-22T02:00:00Z"),
+    post(23, duplicate, "in", "2026-11-22T02:00:00Z"),
+    post(22, silent, "in", "2026-11-22T02:00:00Z"),
+    post(21, maya, "in", "2026-11-22T01:00:00Z")
+]
+var directory = TeamDirectory()
+directory.approved = [developer.id: developer.name]
+directory.people = [
+    maya.id: TeamProfile(skills: ["Swift", "macOS"], owns: ["Remote Team"]),
+    duplicate.id: TeamProfile(skills: ["Swift"], backsUp: ["Remote Team"]),
+    nadia.id: TeamProfile(skills: ["Swift"]),
+    leo.id: TeamProfile(title: "Marketer", skills: ["email campaigns", "copywriting"])
+]
+try directory.save(channel.guild, prefs: prefs)
+try TeamDirectory.saveCapacity([maya.id: Capacity(focused: true, expires: now.addingTimeInterval(2))],
+                               guild: channel.guild, prefs: prefs)
+
+var clock = now
+var requestPaths = [String]()
+var removedRole = false
+var inaccessible = false
+var onlyPermissions = false
+var limitAttendance = false
+MockDiscord.handler = { request in
+    let path = request.url!.path
+    requestPaths.append(path)
+    if path.hasSuffix("/messages") {
+        if limitAttendance { return (429, Data("{\"retry_after\":12.5}".utf8)) }
+        return (200, try! JSONEncoder().encode(syntheticPosts))
+    }
+    if path.hasSuffix("/roles") {
+        if inaccessible { return (403, Data()) }
+        let roles = onlyPermissions ? [admin, integration, everyone] :
+            (removedRole ? [analyst, admin, integration, everyone] : [developer, analyst, admin, integration, everyone])
+        return (200, try! JSONEncoder().encode(roles))
+    }
+    let id = String(path.split(separator: "/").last!)
+    let roles = id == silent.id ? [] : [developer.id, admin.id] + (id == maya.id ? [analyst.id] : [])
+    return (200, try! JSONSerialization.data(withJSONObject: ["roles": roles]))
+}
+let service = MCPRoster(prefs: prefs, session: api.session, credential: { "test-only" }, clock: { clock })
+if CommandLine.arguments.contains("--mcp-test") {
+    await RemoteMCP.run(list: { try await service.listTeam() })
+    exit(0)
+}
+
+func rows(_ result: [String: Any]) -> [String: [String: Any]] {
+    let teammates = result["teammates"] as! [[String: Any]]
+    return Dictionary(uniqueKeysWithValues: teammates.map { ($0["discord_user_id"] as! String, $0) })
+}
+
+var response = try await service.listTeam()
+var peopleByID = rows(response)
+check(peopleByID[maya.id]?["role"] as? String == "Developer"
+      && peopleByID[duplicate.id]?["role"] as? String == "Developer", "One approved role resolves for duplicate-name teammates")
+check(peopleByID[silent.id]?["role"] is NSNull && (peopleByID[silent.id]?["skills"] as? [String]) == [],
+      "Missing profile returns null title and empty skills")
+check(peopleByID[nadia.id]?["status"] as? String == Status.onBreak.title, "On-break specialist stays distinct")
+check(requestPaths.filter { $0.hasSuffix("/roles") }.count == 1 &&
+      requestPaths.filter { $0.contains("/members/") }.count == 5, "Discovery reads one catalogue and unique targeted members")
+let unchangedPaths = requestPaths
+directory.approved[analyst.id] = analyst.name
+try directory.save(channel.guild, prefs: prefs)
+clock = now.addingTimeInterval(2)
+response = try await service.listTeam()
+peopleByID = rows(response)
+check(requestPaths == unchangedPaths && peopleByID[maya.id]?["role"] is NSNull &&
+      (peopleByID[maya.id]?["role_candidates"] as? [String]) == ["Developer", "SEO Analyst"], "Cached MCP sees approval edits and reports ambiguity")
+check(peopleByID[maya.id]?["capacity"] is NSNull, "Capacity expires on a cached attendance snapshot")
+directory.people[maya.id]?.preferredRole = developer.name
+directory.people[duplicate.id]?.title = "Platform Developer"
+try directory.save(channel.guild, prefs: prefs)
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["role_source"] as? String == "discord_role" &&
+      peopleByID[duplicate.id]?["role"] as? String == "Platform Developer",
+      "Role choice and explicit override stay isolated by ID")
+directory.people[maya.id]?.title = "macOS Lead"
+try directory.save(channel.guild, prefs: prefs)
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["role_source"] as? String == "operator" &&
+      peopleByID[maya.id]?["skills"] as? [String] == ["Swift", "macOS"],
+      "Title correction retains skills and updates a running MCP service")
+directory.people[maya.id]?.title = ""
+try directory.save(channel.guild, prefs: prefs)
+check(TeamDirectory.load(channel.guild, prefs: prefs) == directory &&
+      TeamDirectory.load("100000000000000090", prefs: prefs) == TeamDirectory(),
+      "Clearing an override persists and guilds stay isolated")
+removedRole = true
+clock = now.addingTimeInterval(301)
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["role"] as? String == "SEO Analyst", "Removed Discord role no longer contributes after refresh")
+inaccessible = true
+clock = now.addingTimeInterval(602)
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["role"] is NSNull && peopleByID[duplicate.id]?["role"] as? String == "Platform Developer",
+      "Inaccessible roles return unknown while explicit overrides and attendance survive")
+inaccessible = false
+onlyPermissions = true
+clock = now.addingTimeInterval(1000)
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["role"] is NSNull && peopleByID[maya.id]?["status"] as? String == Status.inside.title,
+      "Permissions-only roles leave attendance usable")
+clock = deadline
+peopleByID = rows(try await service.listTeam())
+check(peopleByID[maya.id]?["checkout"] as? String == "automatic" && peopleByID[maya.id]?["status_since"] as? String == plainDate.string(from: deadline),
+      "Enriched MCP still reports auto out and its timestamp")
+limitAttendance = true
+clock = clock.addingTimeInterval(10)
+do { _ = try await service.listTeam(); fatalError("Expected MCP rate limit") }
+catch let limit as RateLimit { check(limit.seconds == 12.5, "MCP records Discord backoff") }
+let pausedRequests = requestPaths.count
+clock = clock.addingTimeInterval(2)
+do { _ = try await service.listTeam(); fatalError("Expected remaining MCP rate limit") }
+catch let limit as RateLimit { check(limit.seconds == 10.5 && pausedRequests == requestPaths.count, "MCP backoff blocks network and reports remaining delay") }
+limitAttendance = false
+clock = clock.addingTimeInterval(11)
+_ = try await service.listTeam()
+check(requestPaths.count > pausedRequests, "MCP can fetch after backoff expires")
+check(RemoteMCP.validArguments(nil) && RemoteMCP.validArguments([String: Any]()) &&
+      !RemoteMCP.validArguments(["role": "Developer"]) && !RemoteMCP.validArguments(NSNull()),
+      "MCP accepts only omitted or empty arguments")
+
+let export = DirectoryTransfer(guild: channel.guild, directory: directory)
+let exported = try JSONEncoder().encode(export)
+let received = try JSONDecoder().decode(DirectoryTransfer.self, from: exported)
+let changes = try received.changes(for: channel.guild, current: TeamDirectory())
+check(changes.additions == 6 && changes.conflicts == 0, "Transfer previews additions")
+check(received.applying(to: TeamDirectory(), replaceConflicts: false) == directory, "Guild directory round-trips")
+var conflicting = directory
+conflicting.people[duplicate.id]?.title = "Different title"
+let conflicts = try received.changes(for: channel.guild, current: conflicting)
+check(conflicts.conflicts == 1 && received.applying(to: conflicting, replaceConflicts: false) == conflicting &&
+      received.applying(to: conflicting, replaceConflicts: true) == directory, "Transfer previews and resolves conflicts explicitly")
+do { _ = try received.changes(for: updateChannel.id, current: directory); fatalError("Expected guild mismatch") }
+catch is Problem { print("PASS Transfer rejects a guild mismatch") }
+check(!String(decoding: exported, as: UTF8.self).contains("capacity"), "Transfer excludes temporary capacity")
+
+let busy = (101...350).reversed().map { post($0, maya, "Update \($0)", "2026-11-22T02:01:00Z") }
+var windowRequests = 0
+var latest = busy
+MockDiscord.handler = { request in
+    windowRequests += 1
+    let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+    let threshold = query?.first { $0.name == "before" }?.value.flatMap(Int.init) ?? Int.max
+    let items = Array(latest.lazy.filter { Int($0.id)! < threshold }.prefix(100))
+    return (200, try! JSONEncoder().encode(items))
+}
+let fullWindow = try await api.window(previous: [], since: rules.today, rebuild: true)
+check(fullWindow.posts.count == 250 && windowRequests == 3, "Busy updates day needs three requests for a full rebuild")
+latest.remove(at: 2)
+latest[0] = post(350, maya, "Edited latest update", latest[0].timestamp)
+let rolling = try await api.window(previous: fullWindow.posts, since: rules.today, rebuild: false)
+check(windowRequests == 4 && !rolling.rebuilt && rolling.posts.count == 249 &&
+      rolling.posts.first?.content == "Edited latest update", "Updates poll uses one request and reflects latest-page edits and deletes")
+latest.removeLast()
+let reconcile = try await api.window(previous: rolling.posts, since: rules.today, rebuild: true)
+check(reconcile.posts.count == 248 && windowRequests == 7, "Full updates reconciliation catches older deletes")
+latest = (500...610).reversed().map { post($0, maya, "New update", "2026-11-22T02:01:00Z") }
+let gapped = try await api.window(previous: reconcile.posts, since: rules.today, rebuild: false)
+check(gapped.rebuilt && gapped.posts.count == 111 && windowRequests == 9, "Updates recover an overlap gap")
+let nextDay = rules.today.addingTimeInterval(86_400)
+let overnight = try await api.window(previous: gapped.posts, since: nextDay, rebuild: true)
+check(overnight.posts.isEmpty, "Midnight excludes the previous team's day")
+
+let retentionBoundary = now.addingTimeInterval(-rosterRetention)
+let justBeforeExpiry = post(901, maya, "in", plainDate.string(from: retentionBoundary.addingTimeInterval(1)))
+let expiredCheckIn = post(900, arif, "in", plainDate.string(from: retentionBoundary))
+let recentCheckout = post(902, arif, "out", plainDate.string(from: now))
+let agingPosts = [recentCheckout, expiredCheckIn, justBeforeExpiry]
+check(roster(posts: agingPosts, members: [], rules: rules).map(\.id) == [maya.id],
+      "Roster keeps check-ins less than seven days old and checkout does not extend retention")
+let oneSecondLater = Rules(now: now.addingTimeInterval(1), zone: TimeZone(identifier: "Asia/Dhaka")!)
+check(roster(posts: agingPosts, members: [], rules: oneSecondLater).isEmpty,
+      "Roster expires a check-in exactly seven days later without a new message")

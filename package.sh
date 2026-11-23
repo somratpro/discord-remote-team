@@ -11,11 +11,11 @@ trap 'rm -rf "$scratch"' EXIT
 ./build.sh "$scratch/staging"
 app="$scratch/staging/Remote Team.app"
 codesign --verify --strict "$app"
-xcrun lipo "$app/Contents/MacOS/TeamCheckin" -verify_arch arm64 x86_64
+[[ "$(xcrun lipo -archs "$app/Contents/MacOS/TeamCheckin")" == arm64 ]]
 ln -s /Applications "$scratch/staging/Applications"
 cp README.md "$scratch/staging/Setup.md"
 
-image="$scratch/Remote-Team-macOS-universal.dmg"
+image="$scratch/Remote-Team-macOS-arm64.dmg"
 hdiutil create -volname "Remote Team" -srcfolder "$scratch/staging" -format UDZO -fs HFS+ "$image"
 hdiutil verify "$image"
-mv "$image" "$dest/Remote-Team-macOS-universal.dmg"
+mv "$image" "$dest/Remote-Team-macOS-arm64.dmg"

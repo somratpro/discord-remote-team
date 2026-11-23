@@ -16,7 +16,7 @@ function git(...args) {
 
 function publish(tag) {
   git('push', '--atomic', 'origin', 'HEAD:refs/heads/main', `refs/tags/${tag}`);
-  console.log(`Pushed ${tag}. GitHub Actions will publish the universal DMG.`);
+  console.log(`Pushed ${tag}. GitHub Actions will publish Remote-Team-macOS-arm64.dmg.`);
 }
 
 function release() {

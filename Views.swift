@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ServiceManagement
+import UniformTypeIdentifiers
 
 struct Face: View {
     let user: User
@@ -28,6 +29,8 @@ struct RosterView: View {
     let pin: () -> Void
     let openDM: (Person) -> Void
     let openProfile: (Person) -> Void
+    let reviewDirectory: () -> Void
+    let handoff: (Person) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -46,9 +49,23 @@ struct RosterView: View {
                     Text(state.detail).font(.callout).fixedSize(horizontal: false, vertical: true)
                 }.foregroundStyle(.secondary).padding(12)
             }
-            if let warning = state.updatesWarning {
-                Text(warning).font(.caption).foregroundStyle(.secondary)
-                    .padding(.horizontal, 16).padding(.vertical, 8)
+            if !state.sample, let channel = state.updatesChannel, state.hasConnection {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button {
+                        state.openBrowser(channel.url)
+                    } label: {
+                        Label("Open work updates channel", systemImage: "arrow.up.right.square")
+                    }.buttonStyle(.borderless)
+                    if let readAt = state.lastUpdatesSync {
+                        Text("Last read " + state.updateReadTime(readAt))
+                    }
+                    if let warning = state.updatesWarning {
+                        Text(warning)
+                    } else if state.lastUpdatesSync != nil && !state.people.contains(where: { $0.workUpdate != nil }) {
+                        Text("No readable updates today")
+                    }
+                }.font(.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 16).padding(.vertical, 6)
             }
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
@@ -67,6 +84,12 @@ struct RosterView: View {
                                         Face(user: p.user, status: p.status, photos: photos)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(p.user.name).fontWeight(.medium)
+                                            let profile = state.profile(p)
+                                            if let title = profile.role {
+                                                Text(title).font(.caption).lineLimit(1).help(title)
+                                            } else if !profile.candidates.isEmpty {
+                                                Text("Multiple job titles · review directory").font(.caption).lineLimit(1)
+                                            }
                                             Text(state.subtitle(p)).font(.caption).foregroundStyle(.secondary)
                                         }
                                         Spacer()
@@ -74,7 +97,10 @@ struct RosterView: View {
                                     }.padding(.vertical, 4).contentShape(Rectangle())
                                 }.buttonStyle(.plain)
                                 .help("Open DM with " + p.user.name)
-                                .contextMenu { Button("Open Discord profile") { openProfile(p) }.disabled(state.sample) }
+                                .contextMenu {
+                                    Button("Open Discord profile") { openProfile(p) }.disabled(state.sample)
+                                    Button("Prepare handoff…") { handoff(p) }
+                                }
                                 if let update = p.workUpdate {
                                     Button { state.openBrowser(update.url) } label: {
                                         VStack(alignment: .leading, spacing: 4) {
@@ -114,7 +140,11 @@ struct RosterView: View {
                 .accessibilityLabel(state.pinned ? "Unpin roster" : "Pin roster")
                 Button(action: settings) { Image(systemName: "gearshape") }
                     .help("Settings").accessibilityLabel("Settings")
-                Menu { Button("Copy AI setup prompt") { copyMCPPrompt() }; Button("Quit Remote Team") { NSApp.terminate(nil) } }
+                Menu {
+                    Button("Review team directory…", action: reviewDirectory).disabled(state.guild == nil)
+                    Button("Copy AI setup prompt") { copyMCPPrompt() }
+                    Button("Quit Remote Team") { NSApp.terminate(nil) }
+                }
                     label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize()
             }.buttonStyle(.borderless).padding(.horizontal, 16).padding(.vertical, 10)
         }.frame(width: 322, height: 454)
@@ -169,6 +199,13 @@ struct SettingsView: View {
                         TextField("Discord channel URL", text: $channel)
                     }
                     VStack(alignment: .leading, spacing: 5) {
+                        Text("Work updates channel link (optional)").font(.callout)
+                        TextField("Discord work updates channel URL", text: $updates)
+                            .accessibilityLabel("Work updates channel")
+                        Text("Leave blank to use the check-in channel for updates.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
                         Text("Bot token").font(.callout)
                         SecureField(state.hasConnection ? "Saved in Keychain · leave blank to keep" : "Enter bot token", text: $token)
                         Text("Saved only in this Mac’s Keychain. Attendance comes directly from Discord.").font(.caption).foregroundStyle(.secondary)
@@ -189,13 +226,6 @@ struct SettingsView: View {
                             else if !value && SMAppService.mainApp.status != .notRegistered { try SMAppService.mainApp.unregister() }
                             if SMAppService.mainApp.status == .requiresApproval { SMAppService.openSystemSettingsLoginItems() }
                         } catch { self.error = error.localizedDescription }
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Work updates channel (optional)").font(.callout)
-                        TextField("Discord channel URL", text: $updates)
-                            .accessibilityLabel("Work updates channel")
-                        Text("Leave blank to show updates from the check-in channel. The bot needs access to any separate channel.")
-                            .font(.caption).foregroundStyle(.secondary)
                     }
                     DisclosureGroup("Time zone and browser", isExpanded: $advanced) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -225,5 +255,263 @@ struct SettingsView: View {
                 }.keyboardShortcut(.defaultAction)
             }.padding(16)
         }.frame(width: 505, height: 510)
+    }
+}
+
+struct DirectoryView: View {
+    @ObservedObject var state: State
+    let guild: String
+    let openProfile: (Person) -> Void
+    let close: () -> Void
+    @SwiftUI.State private var draft: TeamDirectory
+    @SwiftUI.State private var capacity: [String: Capacity]
+    @SwiftUI.State private var imported: DirectoryTransfer?
+    @SwiftUI.State private var error = ""
+    @SwiftUI.State private var selection: String?
+    @SwiftUI.State private var rawLists: [String: String] = [:]
+
+    init(state: State, guild: String, openProfile: @escaping (Person) -> Void, close: @escaping () -> Void) {
+        self.state = state
+        self.guild = guild
+        self.openProfile = openProfile
+        self.close = close
+        _draft = SwiftUI.State(initialValue: state.directory)
+        _capacity = SwiftUI.State(initialValue: state.capacity.filter { $0.value.expires > Date() })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Review job titles").font(.headline)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Recognized job titles").font(.callout)
+                        TextField("Separate titles with commas", text: $draft.recognizedTitles)
+                            .accessibilityLabel("Recognized job titles, separated by commas")
+                        Text("Approve exact job role labels once for everyone who has them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if state.evidence.incomplete { Text("Some Discord role assignments could not be verified.").font(.caption) }
+                    let labels = reviewableRoles.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+                    ForEach(labels, id: \.self) { label in
+                        let ids = reviewableRoles[label, default: []].map(\.id)
+                        Toggle(label, isOn: Binding(
+                            get: { ids.allSatisfy { draft.approved[$0] == label } },
+                            set: { approved in
+                                for id in ids { draft.approved[id] = approved ? label : nil }
+                            }
+                        ))
+                    }
+                    if labels.isEmpty { Text("No recognized job roles to review.").foregroundStyle(.secondary) }
+                    Divider()
+                    Text("Teammates").font(.headline)
+                    ForEach(state.people) { person in
+                        let resolved = draft.resolve(person.id, evidence: state.evidence)
+                        DisclosureGroup(isExpanded: Binding(get: { selection == person.id },
+                                                             set: { selection = $0 ? person.id : nil })) {
+                            fields(person, resolved: resolved).padding(.vertical, 8)
+                        } label: {
+                            VStack(alignment: .leading) {
+                                Text(person.user.name)
+                                Text(resolved.role ?? (resolved.candidates.isEmpty ? "Title unknown" : "Multiple approved titles"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if let imported {
+                        Divider()
+                        transferPreview(imported)
+                    }
+                }.padding(2)
+            }
+            if !error.isEmpty { Text(error).font(.callout).foregroundStyle(.red) }
+            HStack {
+                Button("Import…", action: importDirectory).disabled(state.sample)
+                Button("Export saved directory…", action: exportDirectory).disabled(state.sample)
+                Spacer()
+                Button("Cancel", action: close)
+                Button("Save") {
+                    for id in Array(draft.people.keys) { trimTitle(id) }
+                    capacity = capacity.filter { $0.value.expires > Date() }
+                    draft.people = draft.people.filter { $0.value != TeamProfile() }
+                    do { try state.saveDirectory(draft, capacity: capacity, guild: guild); close() }
+                    catch { self.error = error.localizedDescription }
+                }.keyboardShortcut(.defaultAction)
+                    .disabled(state.guild != guild || imported != nil)
+            }
+        }.textFieldStyle(.roundedBorder).padding(18).frame(width: 545, height: 560)
+            .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var reviewableRoles: [String: [GuildRole]] {
+        let recognized = Set(items(draft.recognizedTitles).map { $0.lowercased() })
+        return Dictionary(grouping: state.evidence.roles.values.filter {
+            draft.approved[$0.id] != nil || recognized.contains($0.name.lowercased())
+        }, by: \.name)
+    }
+
+    private func items(_ text: String) -> [String] {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+
+    private func text(_ id: String, key: String, field: WritableKeyPath<TeamProfile, [String]>) -> Binding<String> {
+        let entry = id + "/" + key
+        return Binding(get: { rawLists[entry] ?? draft.people[id, default: TeamProfile()][keyPath: field].joined(separator: ", ") },
+                       set: { value in
+                           rawLists[entry] = value
+                           draft.people[id, default: TeamProfile()][keyPath: field] = items(value)
+                       })
+    }
+
+    private func fields(_ person: Person, resolved: ResolvedProfile) -> some View {
+        let id = person.id
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(id).font(.caption.monospaced())
+                Spacer()
+                Button("Open Discord profile") { openProfile(person) }.disabled(state.sample)
+            }
+            TextField("Explicit job title from profile or team records", text: Binding(
+                get: { draft.people[id, default: TeamProfile()].title },
+                set: { draft.people[id, default: TeamProfile()].title = $0 }
+            )).onSubmit { trimTitle(id) }
+            if !draft.people[id, default: TeamProfile()].title.isEmpty {
+                Button("Clear title override") { draft.people[id, default: TeamProfile()].title = "" }
+            }
+            if resolved.candidates.count > 1 {
+                Menu("Choose an approved role") {
+                    if draft.people[id]?.preferredRole != nil {
+                        Button("Clear choice") { draft.people[id]?.preferredRole = nil }
+                    }
+                    ForEach(resolved.candidates, id: \.self) { title in
+                        Button(title) { draft.people[id, default: TeamProfile()].preferredRole = title }
+                    }
+                }
+            }
+            TextField("Skills, separated by commas", text: text(id, key: "skills", field: \.skills))
+            TextField("Projects owned, separated by commas", text: text(id, key: "owns", field: \.owns))
+            TextField("Projects backed up, separated by commas", text: text(id, key: "backsUp", field: \.backsUp))
+            Picker("Capacity set by operator", selection: Binding(
+                get: { capacity[id].map { $0.focused ? "focused" : "taking" } ?? "" },
+                set: { option in
+                    capacity[id] = option.isEmpty ? nil : Capacity(focused: option == "focused", expires: nextTeamDay)
+                }
+            )) {
+                Text("Unknown").tag("")
+                Text("Taking tasks").tag("taking")
+                Text("Focused until…").tag("focused")
+            }
+            if let entry = capacity[id] {
+                DatePicker("Expires", selection: Binding(get: { entry.expires }, set: { expiry in
+                    capacity[id] = Capacity(focused: entry.focused, expires: expiry)
+                }))
+                Button("Expire at next team day") {
+                    capacity[id] = Capacity(focused: entry.focused, expires: nextTeamDay)
+                }
+            }
+        }
+    }
+
+    private var nextTeamDay: Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = state.zone
+        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+    }
+
+    private func trimTitle(_ id: String) {
+        guard let title = draft.people[id]?.title else { return }
+        draft.people[id]?.title = title.split(whereSeparator: \.isNewline).first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+    }
+
+    private func importDirectory() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let value = try JSONDecoder().decode(DirectoryTransfer.self, from: Data(contentsOf: url))
+            _ = try value.changes(for: guild, current: draft)
+            imported = value
+            error = ""
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func exportDirectory() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "Remote-Team-Directory.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(DirectoryTransfer(guild: guild, directory: state.directory)).write(to: url, options: .atomic)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    private func transferPreview(_ value: DirectoryTransfer) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Directory import preview").font(.headline)
+            if let changes = try? value.changes(for: guild, current: draft) {
+                Text("\(changes.additions) additions · \(changes.conflicts) conflicts")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(value.approved.keys.sorted(), id: \.self) { id in
+                if let incoming = value.approved[id], incoming != draft.approved[id] {
+                    Text("Role \(id) · \(draft.approved[id].map { "Conflict: \($0) → " } ?? "New: ")\(incoming)")
+                }
+            }
+            ForEach(value.people.keys.sorted(), id: \.self) { id in
+                if let incoming = value.people[id], incoming != draft.people[id] {
+                    let name = state.people.first { $0.id == id }.map { $0.user.name + " · " + id } ?? id
+                    Text("\(name) · \(draft.people[id] == nil ? "New profile" : "Conflicting profile")")
+                    if let current = draft.people[id] { Text("Current · " + describe(current)).font(.caption) }
+                    Text("Incoming · " + describe(incoming)).font(.caption)
+                }
+            }
+            HStack {
+                Button("Cancel import") { imported = nil }
+                Button("Keep existing conflicts") {
+                    draft = value.applying(to: draft, replaceConflicts: false); rawLists = [:]; imported = nil
+                }
+                Button("Use incoming conflicts") {
+                    draft = value.applying(to: draft, replaceConflicts: true); rawLists = [:]; imported = nil
+                }
+            }
+        }
+    }
+
+    private func describe(_ profile: TeamProfile) -> String {
+        [profile.title, profile.skills.joined(separator: ", "),
+         "Owns " + profile.owns.joined(separator: ", "), "Backs up " + profile.backsUp.joined(separator: ", ")]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}
+
+struct HandoffView: View {
+    let person: Person
+    let sample: Bool
+    let openDM: () -> Void
+    let openProfile: () -> Void
+    @SwiftUI.State private var draft = ""
+    @SwiftUI.State private var copied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(person.user.name).font(.headline)
+            Text(person.id).font(.caption.monospaced()).textSelection(.enabled)
+            Text("Paste or write the exact message to copy. Include the deliverable, completion criteria, and any agreed deadline.")
+            TextEditor(text: Binding(get: { draft }, set: { draft = $0; copied = false })).font(.body).frame(height: 150).border(.quaternary)
+            HStack {
+                Button("Open Discord profile", action: openProfile).disabled(sample)
+                Spacer()
+                if copied { Text("Copied").foregroundStyle(.secondary) }
+                Button("Approve, copy & open DM") {
+                    NSPasteboard.general.clearContents()
+                    copied = NSPasteboard.general.setString(draft, forType: .string)
+                    if copied { openDM() }
+                }.disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }.padding(18).frame(width: 495)
+            .background(Color(nsColor: .windowBackgroundColor))
     }
 }

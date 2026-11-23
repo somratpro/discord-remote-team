@@ -19,14 +19,14 @@ jobs:
           persist-credentials: false
       - name: Run Swift tests
         run: |
-          xcrun swiftc Discord.swift Tests/main.swift -o "$RUNNER_TEMP/remote-team-tests"
+          xcrun swiftc Discord.swift Directory.swift MCP.swift Tests/main.swift -o "$RUNNER_TEMP/remote-team-tests"
           "$RUNNER_TEMP/remote-team-tests"
-      - name: Build and verify universal DMG
+      - name: Build and verify Apple silicon DMG
         run: ./package.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: Remote-Team-macOS-universal
-          path: build/Remote-Team-macOS-universal.dmg
+          name: Remote-Team-macOS-arm64
+          path: build/Remote-Team-macOS-arm64.dmg
           if-no-files-found: error
 
   release:
@@ -38,16 +38,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Remote-Team-macOS-universal
+          name: Remote-Team-macOS-arm64
       - name: Publish DMG to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          asset=Remote-Team-macOS-universal.dmg
+          asset=Remote-Team-macOS-arm64.dmg
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$asset" --clobber
           else
-            gh release create "$RELEASE_TAG" "$asset" --verify-tag --title "Remote Team $RELEASE_TAG" --notes "Universal installer for macOS 13 or later. This test build is ad hoc signed and is not notarized by Apple."
+            gh release create "$RELEASE_TAG" "$asset" --verify-tag --title "Remote Team $RELEASE_TAG" --notes "Apple silicon installer for macOS 13 or later. This test build is ad hoc signed and is not notarized by Apple."
           fi

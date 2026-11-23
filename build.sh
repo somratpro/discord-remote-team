@@ -8,10 +8,7 @@ scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 bundle="$scratch/Remote Team.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources" "$scratch/App.iconset"
-for arch in arm64 x86_64; do
-    xcrun swiftc -O -swift-version 5 -target "$arch-apple-macos13.0" Discord.swift State.swift Views.swift MCP.swift main.swift -o "$scratch/$arch"
-done
-xcrun lipo -create "$scratch/arm64" "$scratch/x86_64" -output "$bundle/Contents/MacOS/TeamCheckin"
+xcrun swiftc -O -swift-version 5 -target arm64-apple-macos13.0 Discord.swift Directory.swift State.swift Views.swift MCP.swift main.swift -o "$bundle/Contents/MacOS/TeamCheckin"
 cp Info.plist "$bundle/Contents/Info.plist"
 xcrun swift Icon.swift "$scratch/App.iconset"
 iconutil -c icns "$scratch/App.iconset" -o "$bundle/Contents/Resources/TeamCheckin.icns"

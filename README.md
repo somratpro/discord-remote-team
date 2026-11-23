@@ -1,6 +1,6 @@
 # Remote Team
 
-A native macOS menu bar app for teammates who check in through Discord. Requires macOS 13 or later.
+A native macOS menu bar app for teammates who check in through Discord. Requires an Apple silicon Mac running macOS 13 or later.
 
 | Discord message | Status |
 | --- | --- |
@@ -9,11 +9,11 @@ A native macOS menu bar app for teammates who check in through Discord. Requires
 | `back` | Checked in with a green ring |
 | `out` | Checked out and removed from the menu bar |
 
-Use standalone messages in your chosen channel. A break requires a check-in that day. The roster automatically checks someone out nine hours after their first check-in of the team day, including during a break. This happens in the roster and does not post to Discord. The menu shows up to three photos and the available count. The roster includes recent check-in authors and people who posted a work update today. Each person’s latest text update for the team day appears below their name and links to the original Discord message. Standalone attendance commands are excluded. By default, updates come from the check-in channel. Set **Work updates channel** in Settings to read them from a separate channel the bot can access.
+Use standalone messages in your chosen channel. A break requires a check-in that day. The roster automatically checks someone out nine hours after their first check-in of the team day, including during a break. This happens in the roster and does not post to Discord. The menu shows up to three photos and the available count. The roster automatically includes anyone who checked in during the past seven days. A checkout alone does not extend that window. Today’s work updates can still appear for authors without a recent check-in. Each person’s latest text update for the team day appears below their name and links to the original Discord message. Standalone attendance commands are excluded. By default, updates come from the check-in channel. Paste a separate Discord channel URL into **Settings → Discord connection → Work updates channel link**. The bot needs access to that channel. Click **Open work updates channel** in the roster to open the selected channel.
 
 ## Download and install
 
-Download the universal DMG from [GitHub Releases](https://github.com/somratpro/discord-remote-team/releases). Open it and drag **Remote Team** into **Applications**. These builds are ad hoc signed and have no Apple notarization. If Gatekeeper blocks the downloaded app, use [Apple’s instructions for opening an app you trust](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
+Download `Remote-Team-macOS-arm64.dmg` from [GitHub Releases](https://github.com/somratpro/discord-remote-team/releases). Open it and drag **Remote Team** into **Applications**. These builds are ad hoc signed and have no Apple notarization. If Gatekeeper blocks the downloaded app, use [Apple’s instructions for opening an app you trust](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
 
 GitHub Actions tests and packages a DMG on main, pull requests, and manual runs. Run `./package.sh` to package a DMG locally under `build/`.
 
@@ -35,11 +35,23 @@ Run `./build.sh` with Apple's Swift command line tools. Move the resulting app t
 
 Click an avatar to try the Discord DM route automatically. Existing saved DM links take precedence. Discord may require the actual conversation ID for some people. If Discord opens Friends, right-click the person in the Remote Team roster, choose **Open Discord profile**, and use **Message** in Discord. The desktop profile shortcut uses the Discord app if installed.
 
+## Review the team directory
+
+Open the roster menu and choose **Review team directory**. The app reads the check-in author's assigned Discord roles and the server's role catalogue. Approve exact job labels together, and teammates with those assignments inherit the title. Edit the recognized-title list if your server uses other job labels. A person with several approved roles can have a preferred role selected. It stays valid while their role is assigned and approved.
+
+For a teammate without a usable role, open their Discord profile and enter the explicit job title. Clear the title field to restore role discovery. The directory can also hold skills, projects owned, backup responsibilities and optional operator-entered capacity. Capacity expires at the next team-day boundary by default, with an editable expiry. It does not change attendance counts. Updates show their own last successful read and link to the selected channel.
+
+Use **Export saved directory** and **Import** to move the saved titles, skills and ownership between Macs for the same Discord server. Import previews new and conflicting entries before saving. Each Mac keeps its own capacity, bot credential and DM links.
+
+Right-click a roster entry and choose **Prepare handoff** to paste or write the exact draft for that person. Check the displayed Discord user ID if names collide. **Approve, copy & open DM** copies the text and opens Discord. Send it in Discord after verifying the conversation. The profile shortcut provides a fallback.
+
 ## Connect an AI client
 
 Choose **Copy AI setup prompt** in Settings or the roster menu. Paste the prompt into a client with local stdio MCP support on the same Mac. The prompt contains the executable path, local configuration and delegation instructions. The client may require approval to register the server or enable its tools.
 
-Call the read-only `list_team` tool once with no arguments for availability questions. It returns a summary, counts, check-in timestamps and Discord navigation links in the same response. Repeated calls within five seconds can reuse the same Discord snapshot while recalculating the current statuses. It uses the local Keychain credential. Clients that support persistent instructions can use the supplied prompt to ask about delegation for substantial tasks, get the team roster and draft a handoff. Sending a DM requires an authorized messaging interface and explicit approval of the recipient and draft.
+Call the read-only `list_team` tool once with no arguments for availability questions. It returns a summary, counts, check-in timestamps, job titles and their sources, skills, ownership, current capacity, and Discord navigation links in one response. Repeated calls within five seconds can reuse the same Discord snapshot while recalculating the current statuses. It uses the local Keychain credential. Clients that support persistent instructions can use the supplied prompt to ask about delegation for substantial tasks, get the team roster and draft a handoff. Sending a DM requires an authorized messaging interface and explicit approval of the recipient and draft.
+
+Grok Build can register the command as a [local stdio server](https://docs.x.ai/build/features/mcp-servers). The xAI API's [remote MCP integration](https://docs.x.ai/developers/tools/remote-mcp) requires a hosted server URL. For Dot, verify that the actual host can register or bridge the local stdio command, discover `list_team`, and complete a test call before using it for handoffs.
 
 ## Tests
 
@@ -47,6 +59,6 @@ From the source directory run:
 
 ```sh
 test_dir="$(mktemp -d)"
-xcrun swiftc Discord.swift Tests/main.swift -o "$test_dir/remote-team-tests"
+xcrun swiftc Discord.swift Directory.swift MCP.swift Tests/main.swift -o "$test_dir/remote-team-tests"
 "$test_dir/remote-team-tests"
 ```

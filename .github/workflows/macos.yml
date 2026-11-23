@@ -1,0 +1,53 @@
+name: macOS build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run Swift tests
+        run: |
+          xcrun swiftc Discord.swift Tests/main.swift -o "$RUNNER_TEMP/remote-team-tests"
+          "$RUNNER_TEMP/remote-team-tests"
+      - name: Build and verify universal DMG
+        run: ./package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Remote-Team-macOS-universal
+          path: build/Remote-Team-macOS-universal.dmg
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Remote-Team-macOS-universal
+      - name: Publish DMG to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          asset=Remote-Team-macOS-universal.dmg
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$asset" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$asset" --verify-tag --title "Remote Team $RELEASE_TAG" --notes "Universal installer for macOS 13 or later. This test build is ad hoc signed and is not notarized by Apple."
+          fi
